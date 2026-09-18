@@ -20,6 +20,14 @@ DentaFlow is a dental-practice management system for a Moroccan cabinet. French 
 
 ## 0. Before you write any code
 
+0. **Before touching a pillar dependency you have not yet verified this session** —
+   `drizzle-orm`, `better-auth`, `@trpc/server` / `@trpc/client` / `@trpc/tanstack-react-query`,
+   `nuqs`, `@tanstack/react-query`, `@react-pdf/renderer` — call Context7
+   (`resolve-library-id` then `get-library-docs`) for it first, matching the version actually
+   installed in `package.json`. Training data lags the package; do not assume an API shape from
+   memory. This is in addition to, not instead of, reading `node_modules/next/dist/docs/` for
+   Next.js itself.
+
 1. **Read the Next.js docs for the installed version** at `node_modules/next/dist/docs/`. Your training data about `middleware.ts`, sync `params`, `experimental.ppr` and the Webpack default is **wrong for this repo**.
 2. **Read the reference doc for your task** (§9). Do not work from this file alone — it is a summary, not the specification.
 3. **Read the branch's prompt file** in `prompts/`. It states the scope fence — the only paths you may modify. Do not touch anything outside it; if the task genuinely requires it, stop and say so.
