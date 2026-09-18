@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Poppins } from "next/font/google";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
-
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 
 import "./globals.css";
@@ -31,14 +31,17 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
+      suppressHydrationWarning
       lang="fr"
       className={`${inter.variable} ${poppins.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        <NuqsAdapter>
-          {children}
-          <Toaster />
-        </NuqsAdapter>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <NuqsAdapter>
+            {children}
+            <Toaster />
+          </NuqsAdapter>
+        </ThemeProvider>
       </body>
     </html>
   );
