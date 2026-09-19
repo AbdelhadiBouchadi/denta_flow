@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "Neon": {
+      "type": "http",
+      "url": "https://mcp.neon.tech/mcp?project_id=b2a556vd&readonly=true"
+    }
+  }
+}
