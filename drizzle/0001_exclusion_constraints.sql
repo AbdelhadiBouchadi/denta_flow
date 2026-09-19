@@ -5,4 +5,4 @@ ALTER TABLE appointments
   EXCLUDE USING gist (
     practitioner_id WITH =,
     tstzrange(starts_at, ends_at, '[)') WITH &&
-  ) WHERE (status <> 'canceled' AND practitioner_id IS NOT NULL);
+  ) WHERE (status NOT IN ('canceled', 'no_show') AND practitioner_id IS NOT NULL);
