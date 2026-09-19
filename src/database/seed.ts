@@ -99,12 +99,16 @@ const isoWeekday = (day: Date) => (day.getDay() === 0 ? 7 : day.getDay());
 const dayKey = (day: Date) => format(day, "yyyy-MM-dd");
 /** A clinic day `offset` days from today (TZDate — getters read clinic-local). */
 const clinicDay = (offset: number) => addDays(today, offset);
-/** A random instant inside the working hours of a clinic day. */
+/**
+ * A random instant inside the working hours of a clinic day. Sunday is closed, so a
+ * Sunday date is moved back to the Saturday — never dated on a day the clinic is shut.
+ */
 function workingInstant(day: Date): Date {
-  const sessions = SESSIONS[isoWeekday(day)] ?? SESSIONS[6];
+  const openDay = isoWeekday(day) === 7 ? addDays(day, -1) : day;
+  const sessions = SESSIONS[isoWeekday(openDay)];
   const [start, end] = pick(sessions);
   const minute = int(minutesOf(start), minutesOf(end) - 15);
-  return at(day, hhmmOf(minute - (minute % 5)));
+  return at(openDay, hhmmOf(minute - (minute % 5)));
 }
 /** Clamp a generated instant so money and history never land in the future. */
 const notAfterNow = (instant: Date) => (instant > now ? new Date(now.getTime() - 60_000) : instant);
@@ -625,7 +629,9 @@ async function main() {
       ...treatmentRows.filter((t) => t.patientId === patient.id).map((t) => t.createdAt as Date),
     ].sort((a, b) => a.getTime() - b.getTime())[0];
     if (firstActivity && firstActivity < (patient.createdAt as Date)) {
-      patient.createdAt = new Date(firstActivity.getTime() - int(1, 30) * 86_400_000);
+      // Back-date through workingInstant so the file is opened on an open day, in opening hours.
+      const firstDay = new TZDate(firstActivity.getTime(), CLINIC_TIMEZONE);
+      patient.createdAt = workingInstant(addDays(firstDay, -int(1, 30)));
     }
   }
 
