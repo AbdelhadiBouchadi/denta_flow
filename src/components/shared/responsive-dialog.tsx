@@ -1,27 +1,32 @@
-'use client';
+"use client";
 
-import { useIsMobile } from '@/hooks/use-mobile';
-import React from 'react';
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-} from '../ui/drawer';
+import React from "react";
+
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '../ui/dialog';
+} from "@/components/ui/dialog";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ResponsiveDialogProps {
   title: string;
   description: string;
   children: React.ReactNode;
   open: boolean;
+  /**
+   * Single parameter on purpose: Dialog and Drawer pass incompatible
+   * event-detail objects as their second argument.
+   */
   onOpenChange: (open: boolean) => void;
 }
 

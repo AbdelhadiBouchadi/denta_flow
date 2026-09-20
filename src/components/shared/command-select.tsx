@@ -1,14 +1,17 @@
+"use client";
+
 import React, { useState } from "react";
-import { Button } from "../ui/button";
 import { ChevronsUpDownIcon } from "lucide-react";
-import { cn } from "@/lib/utils";
+
+import { Button } from "@/components/ui/button";
 import {
   CommandEmpty,
   CommandInput,
   CommandItem,
   CommandList,
-  CommandResponsiveDialog,
-} from "../ui/command";
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
+import CommandResponsiveDialog from "./command-responsive-dialog";
 
 type Props = {
   options: Array<{
@@ -17,6 +20,7 @@ type Props = {
     children: React.ReactNode;
   }>;
   onSelect: (value: string) => void;
+  /** Present ⇒ the caller filters server-side, so cmdk must not filter too. */
   onSearch?: (value: string) => void;
   value: string;
   placeholder?: string;
@@ -28,15 +32,15 @@ const CommandSelect = ({
   onSelect,
   onSearch,
   value,
-  placeholder = "Select an option",
+  placeholder = "Sélectionner une option",
   className,
 }: Props) => {
   const [open, setOpen] = useState(false);
   const selectedOption = options.find((option) => option.value === value);
 
-  const handleOpenChange = (value: boolean) => {
+  const handleOpenChange = (nextOpen: boolean) => {
     onSearch?.("");
-    setOpen(value);
+    setOpen(nextOpen);
   };
 
   return (
@@ -51,7 +55,7 @@ const CommandSelect = ({
         )}
         onClick={() => setOpen(true)}
       >
-        <div className="">{selectedOption?.children ?? placeholder}</div>
+        <div>{selectedOption?.children ?? placeholder}</div>
         <ChevronsUpDownIcon />
       </Button>
       <CommandResponsiveDialog
@@ -59,16 +63,16 @@ const CommandSelect = ({
         open={open}
         onOpenChange={handleOpenChange}
       >
-        <CommandInput placeholder="Search ..." onValueChange={onSearch} />
+        <CommandInput placeholder="Rechercher…" onValueChange={onSearch} />
         <CommandList>
           <CommandEmpty>
             <span className="text-muted-foreground text-sm">
-              No options found.
+              Aucune option trouvée.
             </span>
           </CommandEmpty>
-          {options.map((option, idx) => (
+          {options.map((option) => (
             <CommandItem
-              key={idx}
+              key={option.id}
               onSelect={() => {
                 onSelect(option.value);
                 setOpen(false);

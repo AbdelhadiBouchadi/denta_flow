@@ -1,5 +1,6 @@
-import { Button } from "@/components/ui/button";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
 
 type Props = {
   page: number;
@@ -7,11 +8,12 @@ type Props = {
   onPageChange: (page: number) => void;
 };
 
+// Stateless: the URL is the state.
 const DataPagination = ({ page, totalPages, onPageChange }: Props) => {
   return (
     <div className="flex items-center justify-between">
       <div className="text-muted-foreground flex-1 text-sm">
-        Page {page} / {totalPages || 1}
+        Page {page} sur {totalPages || 1}
       </div>
       <div className="flex items-center justify-end space-x-2 py-4">
         <Button
@@ -21,7 +23,7 @@ const DataPagination = ({ page, totalPages, onPageChange }: Props) => {
           onClick={() => onPageChange(Math.max(1, page - 1))}
         >
           <ArrowLeftIcon className="size-4" />
-          Previous
+          Précédent
         </Button>
         <Button
           disabled={page === totalPages || totalPages === 0}
@@ -29,7 +31,7 @@ const DataPagination = ({ page, totalPages, onPageChange }: Props) => {
           variant="outline"
           onClick={() => onPageChange(Math.min(totalPages, page + 1))}
         >
-          Next
+          Suivant
           <ArrowRightIcon className="size-4" />
         </Button>
       </div>
