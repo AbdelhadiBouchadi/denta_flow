@@ -9,6 +9,13 @@ export const MIN_PASSWORD_LENGTH = 8;
 export const AUTH_SUCCESS_REDIRECT = "/tableau-de-bord";
 
 /**
+ * Where a sign-out lands. Straight to /connexion, not to "/": the root is a
+ * 307 to /tableau-de-bord, which the proxy would then bounce back here — two
+ * needless round trips for a user who is already signed out.
+ */
+export const AUTH_SIGN_OUT_REDIRECT = "/connexion";
+
+/**
  * Better Auth answers with an English `message` and a stable `code`.
  * The code is the contract; the message is debug text. Only the French copy
  * below is ever rendered (AGENTS.md §5, 06-ui.md §10).
