@@ -8,6 +8,7 @@ export const env = createEnv({
     BETTER_AUTH_SECRET: z.string().min(1),
     BETTER_AUTH_URL: z.string().url(),
     BOOTSTRAP_ADMIN_EMAIL: z.string().email(),
+    BOOTSTRAP_ADMIN_PASSWORD: z.string().min(6),
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.string().url(),

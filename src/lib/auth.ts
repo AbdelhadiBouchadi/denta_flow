@@ -9,8 +9,7 @@ import { nextCookies } from "better-auth/next-js";
 export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
-    // Flipped to true by the staff branch: staff are then created only by staff.create.
-    disableSignUp: false,
+    disableSignUp: true,
   },
   database: drizzleAdapter(db, { provider: "pg", schema: { ...schema } }),
   user: {

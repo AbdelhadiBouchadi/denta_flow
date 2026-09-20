@@ -11,9 +11,6 @@ export function proxy(request: NextRequest) {
   if (!sessionCookie && !isAuthRoute) {
     return NextResponse.redirect(new URL("/connexion", request.url));
   }
-  if (sessionCookie && isAuthRoute) {
-    return NextResponse.redirect(new URL("/tableau-de-bord", request.url));
-  }
   return NextResponse.next();
 }
 
