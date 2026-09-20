@@ -10,10 +10,37 @@
 import "dotenv/config";
 
 import { eq } from "drizzle-orm";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
 import { auth } from "../src/lib/auth";
 import { db } from "../src/database/index";
+import * as schema from "../src/database/schema";
 import { user } from "../src/database/schema";
+
+const bootstrapAuth = betterAuth({
+  emailAndPassword: {
+    enabled: true,
+    disableSignUp: false,
+  },
+  database: drizzleAdapter(db, { provider: "pg", schema: { ...schema } }),
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        required: true,
+        defaultValue: "assistant",
+        input: false,
+      },
+      isActive: {
+        type: "boolean",
+        required: true,
+        defaultValue: true,
+        input: false,
+      },
+    },
+  },
+});
 
 async function main() {
   const email = process.env.BOOTSTRAP_ADMIN_EMAIL?.trim();
@@ -45,7 +72,7 @@ async function main() {
       process.exit(1);
     }
 
-    await auth.api.signUpEmail({
+    await bootstrapAuth.api.signUpEmail({
       body: { email, password, name: "Administrateur" },
     });
 
