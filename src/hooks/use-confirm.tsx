@@ -28,7 +28,10 @@ export const useConfirm = (
   } | null>(null);
 
   const confirm = (): Promise<boolean> =>
-    new Promise((resolve) => setPromise({ resolve }));
+    new Promise((resolve) => {
+      promise?.resolve(false);
+      setPromise({ resolve });
+    });
 
   const settle = (value: boolean) => {
     promise?.resolve(value);

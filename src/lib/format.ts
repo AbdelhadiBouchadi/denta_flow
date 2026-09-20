@@ -54,6 +54,8 @@ export const formatDH = (cents: number) => {
 export const parseDH = (input: string) => {
   const normalized = input.replace(/\s/g, "").replace(",", ".");
 
+  if (normalized === "") return Number.NaN;
+
   return Math.round(Number(normalized) * 100);
 };
 

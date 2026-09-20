@@ -73,6 +73,7 @@ const CommandSelect = ({
           {options.map((option) => (
             <CommandItem
               key={option.id}
+              data-checked={option.value === value}
               onSelect={() => {
                 onSelect(option.value);
                 setOpen(false);
