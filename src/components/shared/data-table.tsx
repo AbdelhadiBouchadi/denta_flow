@@ -1,43 +1,66 @@
 "use client";
 
 import {
-  ColumnDef,
   flexRender,
-  getCoreRowModel,
-  useReactTable,
+  tableFeatures,
+  useTable,
+  type ColumnDef,
+  type RowData,
 } from "@tanstack/react-table";
 
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
-interface DataTableProps<TData, TValue> {
-  columns: ColumnDef<TData, TValue>[];
+// v9 registers features explicitly. The core row model is automatic; add a
+// feature here only when a slice actually needs sorting, filtering or selection.
+const features = tableFeatures({});
+
+/** Slices type their `columns` export as ColumnDef<DataTableFeatures, TData>[]. */
+export type DataTableFeatures = typeof features;
+
+interface DataTableProps<TData extends RowData> {
+  columns: ColumnDef<DataTableFeatures, TData>[];
   data: TData[];
   onRowClick?: (row: TData) => void;
 }
 
-export function DataTable<TData, TValue>({
+export function DataTable<TData extends RowData>({
   columns,
   data,
   onRowClick,
-}: DataTableProps<TData, TValue>) {
-  const table = useReactTable({
-    data,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
+}: DataTableProps<TData>) {
+  const table = useTable({ features, columns, data });
 
   return (
     <div className="bg-background overflow-hidden rounded-lg border">
       <Table>
+        <TableHeader>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <TableRow key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <TableHead key={header.id}>
+                  {header.isPlaceholder
+                    ? null
+                    : flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
+                </TableHead>
+              ))}
+            </TableRow>
+          ))}
+        </TableHeader>
         <TableBody>
-          {table.getRowModel().rows?.length ? (
+          {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row) => (
-              <TableRow
-                onClick={() => onRowClick?.(row.original)}
-                key={row.id}
-                data-state={row.getIsSelected() && "selected"}
-              >
-                {row.getVisibleCells().map((cell) => (
+              <TableRow key={row.id} onClick={() => onRowClick?.(row.original)}>
+                {row.getAllCells().map((cell) => (
                   <TableCell
                     key={cell.id}
                     className="cursor-pointer p-4 text-sm"
@@ -53,7 +76,7 @@ export function DataTable<TData, TValue>({
                 colSpan={columns.length}
                 className="text-muted-foreground h-19 text-center"
               >
-                No results.
+                Aucun résultat.
               </TableCell>
             </TableRow>
           )}
