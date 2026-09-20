@@ -5,6 +5,8 @@ import * as schema from "@/database/schema";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
+import { eq } from "drizzle-orm";
+import { user } from "@/database/schema";
 
 export const auth = betterAuth({
   emailAndPassword: {
@@ -26,6 +28,20 @@ export const auth = betterAuth({
         required: true,
         defaultValue: true,
         input: false,
+      },
+    },
+  },
+  databaseHooks: {
+    session: {
+      create: {
+        before: async (session) => {
+          const [staff] = await db
+            .select({ isActive: user.isActive })
+            .from(schema.user)
+            .where(eq(user.id, session.userId));
+          if (!staff?.isActive) return false;
+          return { data: session };
+        },
       },
     },
   },
