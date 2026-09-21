@@ -12,8 +12,14 @@ export const env = createEnv({
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.url(),
+    // One clinic per deployment (AGENTS.md §2), so the practice name is
+    // configuration and not a database row. Defaulted rather than required:
+    // a deployment that forgets it must still boot.
+    NEXT_PUBLIC_CLINIC_NAME: z.string().min(1).default("DentaFlow"),
   },
+  emptyStringAsUndefined: true,
   experimental__runtimeEnv: {
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    NEXT_PUBLIC_CLINIC_NAME: process.env.NEXT_PUBLIC_CLINIC_NAME,
   },
 });

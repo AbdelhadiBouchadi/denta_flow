@@ -41,7 +41,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <NuqsAdapter>
             <TRPCReactProvider>
               {children}
-              <Toaster />
+              <Toaster closeButton />
             </TRPCReactProvider>
           </NuqsAdapter>
         </ThemeProvider>
