@@ -13,7 +13,15 @@
 import "dotenv/config";
 
 import { TZDate } from "@date-fns/tz";
-import { addDays, addMonths, differenceInCalendarDays, format, startOfMonth } from "date-fns";
+import {
+  addDays,
+  addMonths,
+  differenceInCalendarDays,
+  differenceInYears,
+  format,
+  parseISO,
+  startOfMonth,
+} from "date-fns";
 import { eq, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { nanoid } from "nanoid";
@@ -28,6 +36,7 @@ import {
   documents,
   expenses,
   insurers,
+  medicalHistories,
   odontogramCharts,
   patients,
   patientTags,
@@ -307,6 +316,64 @@ const MEDICAL_NOTES = [
   "Anxiété importante lors des soins, prévoir des séances courtes.",
   "Hypothyroïdie traitée.",
 ];
+
+// ── Dossier médical ─────────────────────────────────────────────────────────
+type NewMedicalHistory = typeof medicalHistories.$inferInsert;
+type HistoryFacts = Partial<Omit<NewMedicalHistory, "patientId">>;
+
+/**
+ * What each free-text note already says, carried into the structured history
+ * so the two never contradict each other on the same dossier.
+ */
+const NOTE_FACTS: Record<string, HistoryFacts> = {
+  "Diabète de type 2, sous metformine.": {
+    conditions: ["diabetes"],
+    currentMedications: "Metformine 850 mg, 2 fois par jour",
+  },
+  "Hypertension artérielle traitée.": {
+    conditions: ["hypertension"],
+    currentMedications: "Amlodipine 5 mg, 1 fois par jour",
+  },
+  "Sous anticoagulant (acénocoumarol) — demander un INR récent avant tout acte chirurgical.": {
+    conditions: ["heart_disease"],
+    onAnticoagulants: true,
+    currentMedications: "Acénocoumarol (Sintrom) 4 mg, dose adaptée à l’INR",
+  },
+  "Asthme, porte un inhalateur.": {
+    conditions: ["asthma"],
+    currentMedications: "Salbutamol en inhalation, à la demande",
+  },
+  "Cardiopathie valvulaire — antibioprophylaxie avant acte sanglant.": {
+    conditions: ["heart_disease"],
+    needsAntibioticProphylaxis: true,
+  },
+  // Pregnancy is applied separately — only to a woman of the right age.
+  "Grossesse en cours — éviter les radiographies.": {},
+  "Anxiété importante lors des soins, prévoir des séances courtes.": {},
+  "Hypothyroïdie traitée.": {
+    conditions: ["thyroid"],
+    currentMedications: "Lévothyroxine 75 µg, le matin à jeun",
+  },
+};
+
+/** Background conditions drawn at random — the critical flags are placed on purpose. */
+const BACKGROUND_CONDITIONS = [
+  "diabetes", "hypertension", "asthma", "thyroid", "kidney_disease", "epilepsy", "hepatitis",
+] as const;
+const PROFESSIONS = [
+  "Enseignant(e)", "Commerçant(e)", "Fonctionnaire", "Infirmier(ère)", "Agriculteur(trice)",
+  "Ingénieur(e)", "Étudiant(e)", "Chauffeur", "Artisan", "Retraité(e)", "Sans profession",
+  "Comptable", "Pêcheur", "Employé(e) de banque", "Guide touristique",
+];
+const SURGERIES = [
+  "Appendicectomie.", "Césarienne.", "Cholécystectomie.", "Amygdalectomie dans l’enfance.",
+  "Fracture du poignet opérée.", "Hospitalisation pour pneumopathie.",
+];
+const ADULT_RELATIONS = ["Conjoint(e)", "Fils", "Fille", "Frère", "Sœur", "Mère", "Père"];
+const BLOOD_TYPES = [
+  ["o_pos", 40], ["a_pos", 30], ["b_pos", 12], ["ab_pos", 4],
+  ["o_neg", 6], ["a_neg", 5], ["b_neg", 2], ["ab_neg", 1],
+] as const;
 
 // FDI codes (see docs/architecture/08-clinical.md §1).
 const quadrant = (q: number, n: number) => Array.from({ length: n }, (_, i) => `${q}${i + 1}`);
@@ -733,6 +800,148 @@ async function main() {
     { content: "Vérifier les dates de péremption des anesthésiques", dueDate: null, isImportant: false, isDone: true, createdByStaffId: STAFF.assistant.id },
   ];
 
+  // ── Dossier médical ──────────────────────────────────────────────────────
+  // Its own random stream: drawing from `rand` here would reshuffle every
+  // appointment, acte and payment the seed produced before this block existed.
+  const mh = mulberry32(20261010);
+  const mhInt = (min: number, max: number) => min + Math.floor(mh() * (max - min + 1));
+  const mhChance = (p: number) => mh() < p;
+  const mhPick = <T,>(items: readonly T[]): T => items[Math.floor(mh() * items.length)];
+  function mhWeighted<T>(entries: readonly (readonly [T, number])[]): T {
+    const total = entries.reduce((sum, [, w]) => sum + w, 0);
+    let r = mh() * total;
+    for (const [value, w] of entries) {
+      r -= w;
+      if (r < 0) return value;
+    }
+    return entries[entries.length - 1][0];
+  }
+  const mhDigits = (n: number) => Array.from({ length: n }, () => mhInt(0, 9)).join("");
+  const mhMobile = () => `+212${mhPick(["6", "7"])}${mhDigits(8)}`;
+  const ageOf = (p: NewPatient) => differenceInYears(today, parseISO(p.birthDate!));
+
+  for (const p of patientRows) {
+    if (!childIds.has(p.id) && mhChance(0.65)) p.profession = mhPick(PROFESSIONS);
+  }
+
+  /** When the dossier was last saved: some day since the patient was created. */
+  const savedAt = (p: NewPatient, maxDaysAgo: number) => {
+    const age = Math.max(0, differenceInCalendarDays(today, p.createdAt as Date));
+    return at(clinicDay(-mhInt(0, Math.min(age, maxDaysAgo))), hhmmOf(mhInt(9 * 60, 18 * 60)));
+  };
+
+  const historyFor = (p: NewPatient, facts: HistoryFacts): NewMedicalHistory => {
+    const isChild = childIds.has(p.id);
+    const canBePregnant = p.gender === "female" && !isChild && ageOf(p) <= 45;
+    const drawn = isChild ? [] : BACKGROUND_CONDITIONS.filter(() => mhChance(0.06));
+    const updatedAt = savedAt(p, 300);
+    const hasContact = isChild || mhChance(0.6);
+    return {
+      patientId: p.id,
+      onAnticoagulants: false,
+      onBisphosphonates: false,
+      needsAntibioticProphylaxis: false,
+      isPregnant: canBePregnant ? false : null,
+      pregnancyWeeks: null,
+      isBreastfeeding: canBePregnant ? mhChance(0.1) : null,
+      currentMedications: null,
+      surgicalHistory: !isChild && mhChance(0.25) ? mhPick(SURGERIES) : null,
+      anesthesiaReactions: mhChance(0.05) ? "Malaise vagal lors d’une anesthésie locale." : null,
+      smoking: isChild ? "none" : mhWeighted([["none", 70], ["occasional", 12], ["regular", 18]] as const),
+      bruxism: mhChance(0.15),
+      bloodType: mhChance(0.6) ? mhWeighted(BLOOD_TYPES) : null,
+      primaryDoctorName: mhChance(0.5) ? `Dr ${mhPick(LAST_NAMES)}` : null,
+      primaryDoctorPhone: mhChance(0.5) ? `+2125288${mhDigits(5)}` : null,
+      // A child's emergency contact is the other parent.
+      emergencyContactName: hasContact
+        ? `${mhPick(mhChance(0.5) ? FEMALE_FIRST : MALE_FIRST)} ${isChild ? p.lastName : mhPick(LAST_NAMES)}`
+        : null,
+      emergencyContactPhone: hasContact ? mhMobile() : null,
+      emergencyContactRelation: hasContact ? (isChild ? mhPick(["Mère", "Père"]) : mhPick(ADULT_RELATIONS)) : null,
+      updatedByStaffId: mhPick([STAFF.dentist.id, STAFF.assistant.id, adminId]),
+      createdAt: updatedAt,
+      updatedAt,
+      ...facts,
+      // Merged, not replaced: a note's condition joins the drawn ones.
+      conditions: [...new Set([...drawn, ...(facts.conditions ?? [])])],
+    };
+  };
+
+  // ~40% of adults — every one whose note already describes a history, then a
+  // random fill — plus every child: a minor's dossier needs a parent to call.
+  const adults = patientRows.filter((p) => !childIds.has(p.id));
+  const target = Math.round(adults.length * 0.4);
+  const noteFacts = (p: NewPatient) => (p.medicalNotes ? NOTE_FACTS[p.medicalNotes] : undefined);
+  const noteDriven = adults.filter((p) => noteFacts(p) !== undefined);
+  const filled = [
+    ...noteDriven,
+    ...shuffle(adults.filter((p) => !noteDriven.includes(p))).slice(0, Math.max(0, target - noteDriven.length)),
+  ];
+  const historyRows = new Map<string, NewMedicalHistory>();
+  for (const p of filled) historyRows.set(p.id, historyFor(p, noteFacts(p) ?? {}));
+  for (const p of patientRows) {
+    if (childIds.has(p.id)) historyRows.set(p.id, historyFor(p, {}));
+  }
+  // A pregnancy note only becomes a pregnancy for a woman who can be pregnant.
+  for (const p of noteDriven) {
+    const row = historyRows.get(p.id)!;
+    if (p.medicalNotes!.startsWith("Grossesse") && row.isPregnant === false) {
+      const recordedAt = savedAt(p, 14);
+      Object.assign(row, { isPregnant: true, pregnancyWeeks: mhInt(10, 24), createdAt: recordedAt, updatedAt: recordedAt });
+    }
+  }
+
+  // Guarantee one active patient per header pill, so each can be checked on
+  // screen. A pregnancy is recorded recently, so its aged term stays plausible.
+  const isActive = (patientId: string) => activePatients.some((p) => p.id === patientId);
+  const guarantee = (
+    holds: (h: NewMedicalHistory) => boolean,
+    eligible: (p: NewPatient) => boolean,
+    facts: HistoryFacts,
+  ) => {
+    if ([...historyRows.values()].some((h) => holds(h) && isActive(h.patientId))) return;
+    const candidate = activePatients.find((p) => {
+      const h = historyRows.get(p.id);
+      // One critical flag per guaranteed patient, so each pill is seen alone too.
+      const isFlagged = !!h && (!!h.onAnticoagulants || !!h.onBisphosphonates || !!h.needsAntibioticProphylaxis || h.isPregnant === true);
+      return !childIds.has(p.id) && !isFlagged && eligible(p);
+    });
+    if (!candidate) throw new Error("Seed : aucun patient éligible pour une alerte médicale garantie.");
+    const existing = historyRows.get(candidate.id) ?? historyFor(candidate, {});
+    historyRows.set(candidate.id, {
+      ...existing,
+      ...facts,
+      conditions: [...new Set([...(existing.conditions ?? []), ...(facts.conditions ?? [])])],
+    });
+  };
+  guarantee((h) => !!h.onAnticoagulants, () => true, {
+    onAnticoagulants: true,
+    conditions: ["heart_disease"],
+    currentMedications: "Acénocoumarol (Sintrom) 4 mg, dose adaptée à l’INR",
+  });
+  guarantee((h) => !!h.needsAntibioticProphylaxis, () => true, {
+    needsAntibioticProphylaxis: true,
+    conditions: ["heart_disease"],
+  });
+  guarantee((h) => !!h.onBisphosphonates, (p) => ageOf(p) >= 55, {
+    onBisphosphonates: true,
+    conditions: ["osteoporosis"],
+    currentMedications: "Alendronate 70 mg, 1 fois par semaine",
+  });
+  const pregnancyRecordedAt = at(clinicDay(-mhInt(1, 10)), "11:00");
+  guarantee(
+    (h) => h.isPregnant === true,
+    (p) => p.gender === "female" && ageOf(p) >= 20 && ageOf(p) <= 40,
+    {
+      isPregnant: true,
+      pregnancyWeeks: 16,
+      isBreastfeeding: false,
+      createdAt: pregnancyRecordedAt,
+      updatedAt: pregnancyRecordedAt,
+    },
+  );
+  const medicalHistoryRows = [...historyRows.values()];
+
   // ── Write — one atomic batch ──────────────────────────────────────────────
   const queries: [BatchItem<"pg">, ...BatchItem<"pg">[]] = [
     db
@@ -753,7 +962,7 @@ async function main() {
       }),
     db.execute(sql`TRUNCATE TABLE
       ${activityLog}, ${documents}, ${odontogramCharts}, ${payments}, ${treatments},
-      ${appointments}, ${patientTags}, ${patients}, ${scheduleExceptions},
+      ${appointments}, ${medicalHistories}, ${patientTags}, ${patients}, ${scheduleExceptions},
       ${practitionerSchedules}, ${appointmentTypes}, ${services}, ${tags}, ${insurers},
       ${expenses}, ${tasks}, ${clinicSettings}
       CASCADE`),
@@ -768,6 +977,7 @@ async function main() {
     db.insert(scheduleExceptions).values(exceptionRows),
     db.insert(patients).values(patientRows),
     db.insert(patientTags).values(patientTagRows),
+    db.insert(medicalHistories).values(medicalHistoryRows),
     db.insert(appointments).values(appointmentRows),
     db.insert(treatments).values(treatmentRows),
     db.insert(payments).values(paymentRows),
@@ -802,6 +1012,7 @@ async function main() {
     scheduleExceptions: exceptionRows.length,
     patients: patientRows.length,
     patientTags: patientTagRows.length,
+    medicalHistories: medicalHistoryRows.length,
     appointments: appointmentRows.length,
     treatments: treatmentRows.length,
     payments: paymentRows.length,
@@ -811,6 +1022,15 @@ async function main() {
   });
   console.log("Statuts des rendez-vous :", statusCounts);
   console.log("Patients en avance (ids) :", overpaid);
+  // Ids only — open each at /patients/<id>?tab=medical_history to check its pill.
+  const flagged = (holds: (h: NewMedicalHistory) => boolean) =>
+    medicalHistoryRows.filter(holds).map((h) => h.patientId);
+  console.log("Dossiers médicaux à alertes (ids) :", {
+    anticoagulants: flagged((h) => !!h.onAnticoagulants),
+    bisphosphonates: flagged((h) => !!h.onBisphosphonates),
+    antibioprophylaxie: flagged((h) => !!h.needsAntibioticProphylaxis),
+    enceinte: flagged((h) => h.isPregnant === true),
+  });
 }
 
 main().catch((error: unknown) => {
