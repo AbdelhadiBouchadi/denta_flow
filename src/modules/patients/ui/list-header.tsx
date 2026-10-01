@@ -140,7 +140,10 @@ const PatientsListHeader = () => {
           <Button
             variant="ghost"
             size="lg"
-            onClick={() => narrow({ search: "", tagId: "", insurerId: "" })}
+            onClick={() => {
+              setSearchInput("");
+              narrow({ search: "", tagId: "", insurerId: "" });
+            }}
           >
             <XIcon />
             Effacer les filtres
