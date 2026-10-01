@@ -1,8 +1,9 @@
 // src/database/schema.ts
 import {
   pgTable, text, timestamp, boolean, integer, date, time, jsonb, pgEnum,
-  index, uniqueIndex, primaryKey,
+  index, uniqueIndex, primaryKey, check,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 // ── Better Auth owns user/session/account/verification ───────────────────────
@@ -100,6 +101,10 @@ export const serviceCategory   = pgEnum("service_category", [
 export const expenseCategory   = pgEnum("expense_category", [
   "supplies", "lab", "rent", "utilities", "salaries", "equipment", "maintenance", "taxes", "other",
 ]);
+export const smokingStatus     = pgEnum("smoking_status", ["none", "occasional", "regular"]);
+export const bloodType         = pgEnum("blood_type", [
+  "a_pos", "a_neg", "b_pos", "b_neg", "ab_pos", "ab_neg", "o_pos", "o_neg",
+]);
 
 // ── Clinic settings: exactly one row, id = "clinic" ──────────────────────────
 export const clinicSettings = pgTable("clinic_settings", {
@@ -153,6 +158,7 @@ export const patients = pgTable("patients", {
   address: text("address"),
   city: text("city"),
   cin: text("cin"),
+  profession: text("profession"),
   insurerId: text("insurer_id").references(() => insurers.id, { onDelete: "set null" }),
   insuranceNumber: text("insurance_number"),
   allergies: text("allergies"),
@@ -165,6 +171,43 @@ export const patients = pgTable("patients", {
   index("patients_last_name_idx").on(t.lastName),
   index("patients_phone_idx").on(t.phone),
   index("patients_archived_idx").on(t.isArchived),
+]);
+
+// ── Medical history («dossier médical») — at most one row per patient ───────
+// Absent row ⇒ never filled, which the UI must tell apart from «filled, nothing
+// to report». `conditions` holds English keys validated by Zod; the French
+// copy lives in the patients slice's constants.ts.
+// `pregnancyWeeks` is the term AS OF `updatedAt` — readers age it forward.
+export const medicalHistories = pgTable("medical_histories", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  patientId: text("patient_id").notNull().unique().references(() => patients.id, { onDelete: "cascade" }),
+  conditions: jsonb("conditions").$type<string[]>().notNull().default([]),
+  onAnticoagulants: boolean("on_anticoagulants").notNull().default(false),
+  onBisphosphonates: boolean("on_bisphosphonates").notNull().default(false),
+  needsAntibioticProphylaxis: boolean("needs_antibiotic_prophylaxis").notNull().default(false),
+  isPregnant: boolean("is_pregnant"),                   // null = not asked / not applicable
+  pregnancyWeeks: integer("pregnancy_weeks"),
+  isBreastfeeding: boolean("is_breastfeeding"),
+  currentMedications: text("current_medications"),
+  surgicalHistory: text("surgical_history"),            // antécédents chirurgicaux / hospitalisations
+  anesthesiaReactions: text("anesthesia_reactions"),
+  smoking: smokingStatus("smoking").notNull().default("none"),
+  bruxism: boolean("bruxism").notNull().default(false),
+  bloodType: bloodType("blood_type"),
+  primaryDoctorName: text("primary_doctor_name"),       // médecin traitant
+  primaryDoctorPhone: text("primary_doctor_phone"),
+  emergencyContactName: text("emergency_contact_name"), // a parent, for a child
+  emergencyContactPhone: text("emergency_contact_phone"),
+  emergencyContactRelation: text("emergency_contact_relation"),
+  updatedByStaffId: text("updated_by_staff_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, () => [
+  // A term outside 1–42 SA is a typo, whichever client wrote it.
+  check(
+    "medical_histories_pregnancy_weeks_range",
+    sql`pregnancy_weeks IS NULL OR pregnancy_weeks BETWEEN 1 AND 42`,
+  ),
 ]);
 
 // ── Services («actes» catalogue) — billing ──────────────────────────────────

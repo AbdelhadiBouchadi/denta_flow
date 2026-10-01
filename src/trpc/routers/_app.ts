@@ -1,17 +1,21 @@
-import { baseProcedure, createTRPCRouter } from "../init";
+import { insurersRouter } from "@/modules/insurers/server/procedures";
+import { patientsRouter } from "@/modules/patients/server/procedures";
+import { tagsRouter } from "@/modules/tags/server/procedures";
+
+import { createTRPCRouter } from "../init";
 
 /**
- * TEMPORARY — the only router that may live here.
- * It exists to prove the superjson round-trip (`now` must arrive as a real Date)
- * until the first slice lands. Delete it once slices are registered.
+ * The only place slices are registered — one line each. A procedure defined
+ * inline here means the rule has been broken (03-trpc.md §5).
+ *
+ * The temporary `health.ping` router is gone: it existed only to prove the
+ * superjson round-trip until the first slice landed, and `patients.getOne`
+ * now returns `createdAt` as a real Date through the same transformer.
  */
-const healthRouter = createTRPCRouter({
-  ping: baseProcedure.query(() => ({ now: new Date() })),
-});
-
 export const appRouter = createTRPCRouter({
-  health: healthRouter,
-  // Slices are registered here, one line each, as they are built.
+  patients: patientsRouter,
+  tags: tagsRouter,
+  insurers: insurersRouter,
 });
 
 export type AppRouter = typeof appRouter;
