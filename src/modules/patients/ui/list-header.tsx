@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { PlusIcon, SearchIcon, XIcon } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +29,14 @@ const PatientsListHeader = () => {
   const trpc = useTRPC();
   const [filters, setFilters] = usePatientsFilters();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState(filters.search);
+
+  useEffect(() => setSearchInput(filters.search), [filters.search]);
+  useEffect(() => {
+    if (searchInput === filters.search) return;
+    const id = window.setTimeout(() => narrow({ search: searchInput }), 300);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
 
   // A filter change re-keys the list query, which suspends. Inside a
   // transition React keeps the current table on screen instead of flashing
@@ -75,8 +83,8 @@ const PatientsListHeader = () => {
             type="search"
             aria-label="Rechercher un patient"
             placeholder="Rechercher un patient…"
-            value={filters.search}
-            onChange={(event) => narrow({ search: event.target.value })}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
           />
         </InputGroup>
 
@@ -132,9 +140,7 @@ const PatientsListHeader = () => {
           <Button
             variant="ghost"
             size="lg"
-            onClick={() =>
-              narrow({ search: "", tagId: "", insurerId: "" })
-            }
+            onClick={() => narrow({ search: "", tagId: "", insurerId: "" })}
           >
             <XIcon />
             Effacer les filtres

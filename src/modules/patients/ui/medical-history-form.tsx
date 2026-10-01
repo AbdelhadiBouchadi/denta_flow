@@ -38,6 +38,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTRPC } from "@/trpc/client";
 import {
   BLOOD_TYPE_OPTIONS,
+  MAX_PREGNANCY_WEEKS,
   MEDICAL_ALERT_DESCRIPTIONS,
   MEDICAL_CONDITION_OPTIONS,
   SMOKING_STATUS_OPTIONS,
@@ -67,6 +68,21 @@ interface MedicalHistoryFormProps {
 }
 
 /**
+ * Today's term, or `null` once it has aged past a full-term pregnancy. The
+ * schema refuses anything above 42, so pre-filling such a term would block
+ * every save — silently, when the term input is hidden. Empty is «terme
+ * inconnu», which the read view already flags as «terme à vérifier».
+ */
+const toFormPregnancyWeeks = (history: PatientMedicalHistory) => {
+  if (!history) return null;
+  const weeks = getCurrentPregnancyWeeks(
+    history.pregnancyWeeks,
+    history.updatedAt,
+  );
+  return weeks !== null && weeks > MAX_PREGNANCY_WEEKS ? null : weeks;
+};
+
+/**
  * The saved history, as the form edits it. A never-filled dossier starts from
  * «nothing declared», which is what an untouched form would submit anyway.
  *
@@ -82,9 +98,7 @@ const toFormValues = (
   onBisphosphonates: history?.onBisphosphonates ?? false,
   needsAntibioticProphylaxis: history?.needsAntibioticProphylaxis ?? false,
   isPregnant: history?.isPregnant ?? null,
-  pregnancyWeeks: history
-    ? getCurrentPregnancyWeeks(history.pregnancyWeeks, history.updatedAt)
-    : null,
+  pregnancyWeeks: toFormPregnancyWeeks(history),
   isBreastfeeding: history?.isBreastfeeding ?? null,
   currentMedications: history?.currentMedications ?? "",
   surgicalHistory: history?.surgicalHistory ?? "",
@@ -158,8 +172,8 @@ export const MedicalHistoryForm = ({
   const onSubmit = (values: MedicalHistoryValues) => {
     upsert.mutate({
       ...values,
-      // The section was hidden, so whatever it held was never seen — clear it
-      // rather than save an answer nobody could check.
+      // The term is only visible and meaningful for a declared pregnancy.
+      ...(values.isPregnant === true ? {} : { pregnancyWeeks: null }),
       ...(canBePregnant
         ? {}
         : { isPregnant: null, pregnancyWeeks: null, isBreastfeeding: null }),

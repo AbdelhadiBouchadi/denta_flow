@@ -17,6 +17,8 @@ const PHONE_PATTERN = /^(?:\+212|0)[5-7]\d{8}$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL = z.email();
 
+const stripPhoneSeparators = (value: string) => value.replace(/[\s.\-]/g, "");
+
 /** "0612345678" and "+212612345678" both store as "+212612345678". */
 const toE164 = (value: string) =>
   value.startsWith("0") ? `+212${value.slice(1)}` : value;
@@ -41,7 +43,8 @@ const phone = z
   .string()
   .trim()
   .min(1, { message: "Le téléphone est obligatoire" })
-  .regex(PHONE_PATTERN, {
+  .transform(stripPhoneSeparators)
+  .refine((v) => PHONE_PATTERN.test(v), {
     message: "Numéro de téléphone marocain invalide (ex. 06 12 34 56 78)",
   })
   .transform(toE164);
@@ -50,7 +53,7 @@ const optionalPhone = z
   .string()
   .trim()
   .nullish()
-  .transform((value) => (value ? value : null))
+  .transform((value) => (value ? stripPhoneSeparators(value) : null))
   .refine((value) => value === null || PHONE_PATTERN.test(value), {
     message: "Numéro de téléphone marocain invalide (ex. 06 12 34 56 78)",
   })
@@ -81,9 +84,12 @@ const optionalBirthDate = z
       (ISO_DATE_PATTERN.test(value) && !Number.isNaN(Date.parse(value))),
     { message: "Date de naissance invalide" },
   )
-  .refine((value) => value === null || value <= format(clinicNow(), "yyyy-MM-dd"), {
-    message: "La date de naissance ne peut pas être dans le futur",
-  });
+  .refine(
+    (value) => value === null || value <= format(clinicNow(), "yyyy-MM-dd"),
+    {
+      message: "La date de naissance ne peut pas être dans le futur",
+    },
+  );
 
 /** Mirrors the `gender` pgEnum. Values are English, the copy lives in constants.ts. */
 export const GENDER_VALUES = ["male", "female"] as const;
@@ -177,7 +183,10 @@ export const medicalHistorySchema = z.object({
     "Le nom du contact d’urgence est trop long",
   ),
   emergencyContactPhone: optionalPhone,
-  emergencyContactRelation: optionalText(40, "Le lien de parenté est trop long"),
+  emergencyContactRelation: optionalText(
+    40,
+    "Le lien de parenté est trop long",
+  ),
 });
 
 /** The procedure input: the same fields, plus the patient they belong to. */
