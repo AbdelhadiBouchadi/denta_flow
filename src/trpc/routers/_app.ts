@@ -1,3 +1,4 @@
+import { clinicRouter } from "@/modules/clinic/server/procedures";
 import { insurersRouter } from "@/modules/insurers/server/procedures";
 import { patientsRouter } from "@/modules/patients/server/procedures";
 import { tagsRouter } from "@/modules/tags/server/procedures";
@@ -16,6 +17,7 @@ export const appRouter = createTRPCRouter({
   patients: patientsRouter,
   tags: tagsRouter,
   insurers: insurersRouter,
+  clinic: clinicRouter,
 });
 
 export type AppRouter = typeof appRouter;
