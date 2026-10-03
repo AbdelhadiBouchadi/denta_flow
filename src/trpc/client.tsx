@@ -2,7 +2,13 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { createTRPCClient, httpBatchLink } from "@trpc/client";
+import {
+  createTRPCClient,
+  httpBatchLink,
+  httpLink,
+  isNonJsonSerializable,
+  splitLink,
+} from "@trpc/client";
 import { createTRPCContext } from "@trpc/tanstack-react-query";
 import superjson from "superjson";
 import { useState } from "react";
@@ -34,8 +40,18 @@ export function TRPCReactProvider(
   const queryClient = getQueryClient();
   const [trpcClient] = useState(() =>
     createTRPCClient<AppRouter>({
-      // transformer here — must match init.ts and query-client.ts.
-      links: [httpBatchLink({ url: getUrl(), transformer: superjson })],
+      links: [
+        // FormData (a file upload) cannot ride the batch link, which
+        // JSON-encodes every input: it goes alone through `httpLink` as
+        // multipart. The server hands the raw FormData to the procedure
+        // without the transformer, but the RESPONSE is still superjson — so
+        // both links declare it. Must match init.ts and query-client.ts.
+        splitLink({
+          condition: (op) => isNonJsonSerializable(op.input),
+          true: httpLink({ url: getUrl(), transformer: superjson }),
+          false: httpBatchLink({ url: getUrl(), transformer: superjson }),
+        }),
+      ],
     }),
   );
 
