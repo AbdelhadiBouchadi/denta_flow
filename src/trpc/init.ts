@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import { cache } from "react";
 import { headers } from "next/headers";
 import superjson from "superjson";
+import { z, ZodError } from "zod";
 
 import { auth } from "@/lib/auth";
 
@@ -16,6 +17,22 @@ export type TRPCContext = Awaited<ReturnType<typeof createTRPCContext>>;
 const t = initTRPC.context<TRPCContext>().create({
   // MANDATORY — must match client.tsx and query-client.ts. All three or none.
   transformer: superjson,
+  // A rejected `.input()` keeps its structured issues under `data.zodError`,
+  // so the client can tell a validation failure from any other BAD_REQUEST.
+  // Zod's own message is an English JSON dump and never reaches a user —
+  // `getErrorMessage` (src/lib/errors.ts) replaces it with French copy.
+  errorFormatter({ shape, error }) {
+    return {
+      ...shape,
+      data: {
+        ...shape.data,
+        zodError:
+          error.code === "BAD_REQUEST" && error.cause instanceof ZodError
+            ? z.flattenError(error.cause)
+            : null,
+      },
+    };
+  },
 });
 
 export const createTRPCRouter = t.router;

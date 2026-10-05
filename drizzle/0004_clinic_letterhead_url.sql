@@ -1,0 +1,1 @@
+ALTER TABLE "clinic_settings" ADD COLUMN "letterhead_url" text;

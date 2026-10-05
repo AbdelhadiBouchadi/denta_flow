@@ -117,6 +117,7 @@ export const clinicSettings = pgTable("clinic_settings", {
   ice: text("ice"), patente: text("patente"), fiscalId: text("fiscal_id"),
   cnssNumber: text("cnss_number"), inpe: text("inpe"),
   logoUrl: text("logo_url"),
+  letterheadUrl: text("letterhead_url"),             // A5 letterhead the PDFs are printed onto
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
