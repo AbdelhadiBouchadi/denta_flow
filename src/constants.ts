@@ -51,3 +51,11 @@ export const IMAGE_DROPZONE_COPY = {
   unsaved: "Non enregistré",
   removalPending: "L’image sera retirée à l’enregistrement.",
 } as const;
+
+// ── User-facing error copy shared by every slice ────────────────────────────
+export const ERROR_MESSAGES = {
+  /** A procedure input rejected by its Zod schema. */
+  invalidFields: "Certains champs sont invalides.",
+  /** No server answer at all — offline, DNS, a dropped connection. */
+  network: "Le serveur est injoignable. Vérifiez votre connexion et réessayez.",
+} as const;
