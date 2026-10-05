@@ -15,8 +15,8 @@ interface Props {
  * session from a stale cookie, so the bounce for an already-signed-in staff
  * member is made here, where `auth.api.getSession` is authoritative.
  *
- * Placing it on the layout rather than on each page covers /connexion and
- * /inscription from one call.
+ * Placing it on the layout rather than on the page covers every (auth) route
+ * from one call.
  */
 const AuthLayout = async ({ children }: Props) => {
   const session = await auth.api.getSession({ headers: await headers() });

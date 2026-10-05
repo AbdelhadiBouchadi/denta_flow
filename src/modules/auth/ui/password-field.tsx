@@ -21,16 +21,14 @@ interface Props<TValues extends FieldValues> {
   control: Control<TValues>;
   name: FieldPath<TValues>;
   label: string;
-  /** "current-password" on sign-in, "new-password" on sign-up. */
-  autoComplete: "current-password" | "new-password";
+  autoComplete: "current-password";
   disabled?: boolean;
 }
 
 /**
  * A password input with a reveal toggle, wired to react-hook-form.
  *
- * Three fields across the two auth forms need exactly this, so the reveal state
- * lives here once rather than three times. It stays in the slice's `ui/`, not in
+ * The sign-in form is its only consumer. It stays in the slice's `ui/`, not in
  * `components/shared/`, because only this slice uses it (AGENTS.md §4).
  *
  * Generic over the form's value type so `name` is checked against the schema —
