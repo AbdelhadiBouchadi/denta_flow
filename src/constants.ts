@@ -11,6 +11,14 @@ export const AGENDA_SLOT_MINUTES = 15;
 export const AGENDA_DAY_START = "08:00";
 export const AGENDA_DAY_END = "20:00";
 
+/**
+ * The staff roles that see patients — the one definition of «practitioner»
+ * (prompts/15-types-rdv-horaires.md). A single-owner clinic's admin is
+ * usually the dentist. A practitioner is an ACTIVE staff member with one of
+ * these roles; schedules, leave and the agenda filter all import this.
+ */
+export const PRACTITIONER_ROLES = ["dentist", "admin"] as const;
+
 // ── Uploaded clinic assets (logo, letterhead) ───────────────────────────────
 // One source for the dropzone and the procedure: the client validates against
 // these for fast feedback, the server re-validates against the same values.

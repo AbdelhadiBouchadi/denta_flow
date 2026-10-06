@@ -68,3 +68,113 @@ export const endOfClinicDay = (d: ClinicDateInput): TZDate =>
 /** Monday 00:00:00.000 of the clinic week that contains the instant. */
 export const startOfClinicWeek = (d: ClinicDateInput): TZDate =>
   startOfWeek(toClinicTime(d), { weekStartsOn: WEEK_STARTS_ON });
+
+// ── Wall-clock times and calendar dates ─────────────────────────────────────
+//
+// A practitioner's hours are a Postgres `time` — "09:00", no date, no zone —
+// and a closure is entered as calendar days. Neither is an instant until it is
+// resolved against a concrete clinic day, which only happens below, through
+// `TZDate`. Never compare a `time` to a `timestamptz` directly (08-clinical.md §4).
+
+/** "HH:mm", 24-hour, 00:00 → 23:59. */
+export const WALL_CLOCK_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+/** "yyyy-MM-dd", a calendar day with no zone attached. */
+export const CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** "09:30" → 570. Throws on anything that is not "HH:mm". */
+export const wallClockToMinutes = (wallClock: string): number => {
+  const match = WALL_CLOCK_PATTERN.exec(wallClock);
+  if (!match) throw new RangeError(`Invalid wall-clock time: ${wallClock}`);
+  return Number(match[1]) * 60 + Number(match[2]);
+};
+
+/** 570 → "09:30". */
+export const minutesToWallClock = (minutes: number): string =>
+  `${pad2(Math.floor(minutes / 60))}:${pad2(minutes % 60)}`;
+
+/** "09:30" → "09:30:00", the literal a Postgres `time` column takes. */
+export const toPgTime = (wallClock: string): string => {
+  wallClockToMinutes(wallClock);
+  return `${wallClock}:00`;
+};
+
+/** "09:30:00" (what the driver returns for a `time`) → "09:30". */
+export const fromPgTime = (pgTime: string): string => {
+  const wallClock = pgTime.slice(0, 5);
+  wallClockToMinutes(wallClock);
+  return wallClock;
+};
+
+const parseCalendarDate = (date: string) => {
+  const match = CALENDAR_DATE_PATTERN.exec(date);
+  if (!match) throw new RangeError(`Invalid calendar date: ${date}`);
+  return {
+    year: Number(match[1]),
+    monthIndex: Number(match[2]) - 1,
+    day: Number(match[3]),
+  };
+};
+
+/** True for a "yyyy-MM-dd" that names a real day (no 31 February). */
+export const isCalendarDate = (date: string): boolean => {
+  const match = CALENDAR_DATE_PATTERN.exec(date);
+  if (!match) return false;
+  const { year, monthIndex, day } = parseCalendarDate(date);
+  const probe = new Date(Date.UTC(year, monthIndex, day));
+  return (
+    probe.getUTCFullYear() === year &&
+    probe.getUTCMonth() === monthIndex &&
+    probe.getUTCDate() === day
+  );
+};
+
+/**
+ * The UTC instant at which the clinic's wall clock reads `wallClock` on
+ * `date`. ("2026-03-05", "00:00") is 00:00Z (Ramadan, UTC+0);
+ * ("2026-04-15", "00:00") is 23:00Z the day before (UTC+1).
+ */
+export const clinicInstant = (date: string, wallClock = "00:00"): Date => {
+  const { year, monthIndex, day } = parseCalendarDate(date);
+  const minutes = wallClockToMinutes(wallClock);
+  return new Date(
+    new TZDate(
+      year,
+      monthIndex,
+      day,
+      Math.floor(minutes / 60),
+      minutes % 60,
+      CLINIC_TIMEZONE,
+    ).getTime(),
+  );
+};
+
+/** Clinic-local midnight at the start of the day AFTER `date`. */
+export const startOfNextClinicDay = (date: string): Date => {
+  const { year, monthIndex, day } = parseCalendarDate(date);
+  // TZDate rolls day + 1 over month and year ends the way Date does.
+  return new Date(
+    new TZDate(year, monthIndex, day + 1, CLINIC_TIMEZONE).getTime(),
+  );
+};
+
+/** The clinic calendar day an instant falls on, as "yyyy-MM-dd". */
+export const toClinicDate = (instant: ClinicDateInput): string => {
+  const local = toClinicTime(instant);
+  return `${local.getFullYear()}-${pad2(local.getMonth() + 1)}-${pad2(local.getDate())}`;
+};
+
+/** The clinic wall-clock reading of an instant, as "HH:mm". */
+export const toClinicWallClock = (instant: ClinicDateInput): string => {
+  const local = toClinicTime(instant);
+  return `${pad2(local.getHours())}:${pad2(local.getMinutes())}`;
+};
+
+/** The calendar day before `date`, as "yyyy-MM-dd". Zone-free arithmetic. */
+export const previousCalendarDate = (date: string): string => {
+  const { year, monthIndex, day } = parseCalendarDate(date);
+  const probe = new Date(Date.UTC(year, monthIndex, day - 1));
+  return `${probe.getUTCFullYear()}-${pad2(probe.getUTCMonth() + 1)}-${pad2(probe.getUTCDate())}`;
+};

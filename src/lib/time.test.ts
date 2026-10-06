@@ -3,12 +3,22 @@ import { describe, expect, it } from "vitest";
 
 import { CLINIC_TIMEZONE } from "@/constants";
 import {
+  clinicInstant,
   clinicNow,
   endOfClinicDay,
   fromClinicTime,
+  fromPgTime,
+  isCalendarDate,
+  minutesToWallClock,
+  previousCalendarDate,
   startOfClinicDay,
   startOfClinicWeek,
+  startOfNextClinicDay,
+  toClinicDate,
   toClinicTime,
+  toClinicWallClock,
+  toPgTime,
+  wallClockToMinutes,
 } from "@/lib/time";
 
 /**
@@ -174,5 +184,93 @@ describe("clinicNow", () => {
     expect(now.timeZone).toBe(CLINIC_TIMEZONE);
     expect(now.getTime()).toBeGreaterThanOrEqual(before);
     expect(now.getTime()).toBeLessThanOrEqual(after);
+  });
+});
+
+describe("wall-clock times", () => {
+  it("converts HH:mm to minutes and back", () => {
+    expect(wallClockToMinutes("00:00")).toBe(0);
+    expect(wallClockToMinutes("09:30")).toBe(570);
+    expect(wallClockToMinutes("23:55")).toBe(1435);
+    expect(minutesToWallClock(570)).toBe("09:30");
+    expect(minutesToWallClock(0)).toBe("00:00");
+  });
+
+  it("refuses anything that is not a 24-hour HH:mm", () => {
+    for (const bad of ["9:30", "24:00", "12:60", "09:30:00", "", "9h30"]) {
+      expect(() => wallClockToMinutes(bad)).toThrow(RangeError);
+    }
+  });
+
+  it("round-trips HH:mm through a Postgres time literal", () => {
+    for (const wallClock of ["00:00", "08:05", "12:30", "23:55"]) {
+      expect(toPgTime(wallClock)).toBe(`${wallClock}:00`);
+      expect(fromPgTime(toPgTime(wallClock))).toBe(wallClock);
+    }
+  });
+
+  it("is a wall-clock value: the process timezone never shifts it", () => {
+    // TZ=UTC here; the clinic is UTC+1. "09:00" stays "09:00" both ways.
+    expect(fromPgTime("09:00:00")).toBe("09:00");
+  });
+});
+
+describe("calendar dates", () => {
+  it("accepts real days only", () => {
+    expect(isCalendarDate("2026-02-28")).toBe(true);
+    expect(isCalendarDate("2026-02-29")).toBe(false);
+    expect(isCalendarDate("2026-13-01")).toBe(false);
+    expect(isCalendarDate("15/06/2026")).toBe(false);
+  });
+
+  it("steps back one day across a month and a year", () => {
+    expect(previousCalendarDate("2026-03-01")).toBe("2026-02-28");
+    expect(previousCalendarDate("2026-01-01")).toBe("2025-12-31");
+  });
+});
+
+describe("clinicInstant", () => {
+  it("resolves clinic midnight at UTC+1 in April 2026", () => {
+    expect(clinicInstant("2026-04-15").toISOString()).toBe(
+      "2026-04-14T23:00:00.000Z",
+    );
+  });
+
+  it("resolves clinic midnight at UTC+0 inside Ramadan 2026", () => {
+    expect(clinicInstant("2026-03-05").toISOString()).toBe(
+      "2026-03-05T00:00:00.000Z",
+    );
+  });
+
+  it("places a wall-clock time on the clinic day", () => {
+    expect(clinicInstant("2026-06-15", "14:30").toISOString()).toBe(
+      "2026-06-15T13:30:00.000Z",
+    );
+  });
+
+  it("round-trips through toClinicDate and toClinicWallClock", () => {
+    for (const [date, time] of [
+      ["2026-03-05", "08:15"],
+      ["2026-06-15", "00:00"],
+      ["2026-12-31", "23:55"],
+    ] as const) {
+      const instant = clinicInstant(date, time);
+      expect(toClinicDate(instant)).toBe(date);
+      expect(toClinicWallClock(instant)).toBe(time);
+    }
+  });
+});
+
+describe("startOfNextClinicDay", () => {
+  it("is the next clinic midnight, across a month end", () => {
+    expect(startOfNextClinicDay("2026-06-30").toISOString()).toBe(
+      "2026-06-30T23:00:00.000Z",
+    );
+  });
+
+  it("is midnight UTC on a Ramadan day", () => {
+    expect(startOfNextClinicDay("2026-03-05").toISOString()).toBe(
+      "2026-03-06T00:00:00.000Z",
+    );
   });
 });
