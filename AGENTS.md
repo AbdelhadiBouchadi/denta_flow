@@ -181,6 +181,8 @@ No i18n library, no translation files. Enum copy lives in the slice's `constants
 
 **Time.** `timestamp with time zone`, store UTC, render clinic-local. All day/week arithmetic goes through `TZDate` with `CLINIC_TIMEZONE` in `src/lib/time.ts`. **A hardcoded `+01:00` is a bug** — Morocco reverts to UTC+0 during Ramadan every year. Week starts Monday (`WEEK_STARTS_ON = 1`), ISO weekday 1 = lundi.
 
+**NGAP.** NGAP data is reference data read from `services/data/ngap-acts.json` by code. The clinic's price is `defaultPriceCents`; the NGAP tariff is informational and is never written to a price. The JSON is unofficial and unverified against the regulation; letter values change by tariff regulation — updating them is a data-file change. No client component imports `services/ngap.ts` or the JSON.
+
 **Identity.** IDs are `text` + `nanoid()`, never `serial`. Patients additionally carry a 4-character `shortCode` shown in the UI. Every table carries `createdAt` + `updatedAt`.
 
 ---

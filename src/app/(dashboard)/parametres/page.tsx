@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
+import type { SearchParams } from "nuqs/server";
 import {
   Building2Icon,
+  ClipboardListIcon,
   ShieldCheckIcon,
   TagsIcon,
   UsersIcon,
@@ -24,6 +26,13 @@ import InsurersView, {
   InsurersViewError,
   InsurersViewLoading,
 } from "@/modules/insurers/ui/views/insurers-view";
+import { SERVICE_COPY } from "@/modules/services/constants";
+import { loadSearchParams as loadServicesSearchParams } from "@/modules/services/params";
+import ServicesListHeader from "@/modules/services/ui/list-header";
+import ServicesView, {
+  ServicesViewError,
+  ServicesViewLoading,
+} from "@/modules/services/ui/views/services-view";
 import { STAFF_COPY } from "@/modules/staff/constants";
 import StaffListHeader from "@/modules/staff/ui/list-header";
 import StaffView, {
@@ -47,7 +56,14 @@ export const metadata: Metadata = {
  * Each later settings branch adds exactly one entry to the list below — its
  * `id`, `label`, `icon` and `content` — plus its prefetch. None adds a route.
  */
-const SettingsPage = async () => {
+interface Props {
+  searchParams: Promise<SearchParams>;
+}
+
+const SettingsPage = async ({ searchParams }: Props) => {
+  // «Actes» is the one section with list filters in the URL.
+  const servicesFilters = await loadServicesSearchParams(searchParams);
+
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/connexion");
 
@@ -56,6 +72,9 @@ const SettingsPage = async () => {
   void queryClient.prefetchQuery(trpc.staff.getMany.queryOptions());
   void queryClient.prefetchQuery(trpc.tags.getMany.queryOptions());
   void queryClient.prefetchQuery(trpc.insurers.getMany.queryOptions());
+  void queryClient.prefetchQuery(
+    trpc.services.getMany.queryOptions({ ...servicesFilters }),
+  );
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
@@ -113,6 +132,21 @@ const SettingsPage = async () => {
                 <Suspense fallback={<InsurersViewLoading />}>
                   <ErrorBoundary fallback={<InsurersViewError />}>
                     <InsurersView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ),
+          },
+          {
+            id: "services",
+            label: SERVICE_COPY.sectionTitle,
+            icon: <ClipboardListIcon />,
+            content: (
+              <>
+                <ServicesListHeader />
+                <Suspense fallback={<ServicesViewLoading />}>
+                  <ErrorBoundary fallback={<ServicesViewError />}>
+                    <ServicesView />
                   </ErrorBoundary>
                 </Suspense>
               </>
