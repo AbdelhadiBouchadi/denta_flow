@@ -103,6 +103,10 @@ export const exceptionFormSchema = z
       .transform((value) => value || null),
   })
   .superRefine((value, ctx) => {
+    if (!isCalendarDate(value.startDate) || !isCalendarDate(value.endDate)) {
+      return;
+    }
+
     if (value.endDate < value.startDate) {
       ctx.addIssue({
         code: "custom",
