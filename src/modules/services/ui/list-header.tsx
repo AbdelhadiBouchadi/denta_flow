@@ -58,7 +58,14 @@ const ServicesListHeader = () => {
       void setFilters({ ...next, page: DEFAULT_PAGE });
     });
 
-  useEffect(() => setSearchInput(filters.search), [filters.search]);
+  // The URL changed under the box (back button, «Effacer les filtres»): the
+  // box follows. Adjusted during render, not in an effect — no extra pass.
+  const [syncedSearch, setSyncedSearch] = useState(filters.search);
+  if (filters.search !== syncedSearch) {
+    setSyncedSearch(filters.search);
+    setSearchInput(filters.search);
+  }
+
   useEffect(() => {
     if (searchInput === filters.search) return;
     const id = window.setTimeout(
