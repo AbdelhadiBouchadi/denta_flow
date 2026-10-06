@@ -35,6 +35,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/format";
 import { clinicNow } from "@/lib/time";
+import { selectableInsurers } from "@/modules/insurers/options";
 import { useTRPC } from "@/trpc/client";
 import { GENDER_OPTIONS, NO_INSURER_LABEL } from "../constants";
 import { useInvalidatePatients } from "../hooks/use-invalidate-patients";
@@ -91,6 +92,14 @@ export const PatientForm = ({
   const { data: insurers } = useQuery(trpc.insurers.getMany.queryOptions());
 
   const isEdit = !!initialValues?.id;
+
+  // Active insurers, plus the one this patient already carries even if it has
+  // since been deactivated: otherwise the select opens empty and saving
+  // silently clears `insurerId` (prompts/13-tags-assurances.md).
+  const insurerOptions = selectableInsurers(
+    insurers?.items ?? [],
+    initialValues?.insurerId,
+  );
 
   const form = useForm<PatientFormValues, unknown, PatientInsertValues>({
     resolver: zodResolver(patientInsertSchema),
@@ -338,10 +347,10 @@ export const PatientForm = ({
                     disabled={isPending || !insurers}
                     items={[
                       { label: NO_INSURER_LABEL, value: null },
-                      ...(insurers?.items.map((insurer) => ({
+                      ...insurerOptions.map((insurer) => ({
                         label: insurer.name,
                         value: insurer.id,
-                      })) ?? []),
+                      })),
                     ]}
                   >
                     <SelectTrigger size="default" className="h-9 w-full">
@@ -349,7 +358,7 @@ export const PatientForm = ({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={null}>{NO_INSURER_LABEL}</SelectItem>
-                      {insurers?.items.map((insurer) => (
+                      {insurerOptions.map((insurer) => (
                         <SelectItem key={insurer.id} value={insurer.id}>
                           {insurer.name}
                         </SelectItem>

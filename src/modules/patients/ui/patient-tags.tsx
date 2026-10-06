@@ -1,30 +1,15 @@
-import type { CSSProperties } from "react";
-
+import TagBadge from "@/components/shared/tag-badge";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { getTagIcon } from "@/modules/tags/constants";
 import { EMPTY_FIELD, MAX_VISIBLE_TAGS } from "../constants";
 import type { PatientTagSummary } from "../types";
 
 /**
- * A patient's tags as small colour pills.
- *
- * The colour is the tag row's own `color`, configured per clinic — data, not a
- * hardcoded hex (AGENTS.md #32). It is handed to Tailwind as a custom property
- * so the tint and the text derive from the one value.
- *
- * The tag's `icon` column is carried by the procedure but not rendered yet:
- * resolving a lucide name at runtime costs a lazy chunk per distinct icon, and
- * the label already carries the meaning.
+ * A patient's tags as small colour pills — the shared TagBadge, the same one
+ * Paramètres renders. The icon comes from the tags slice's curated static map,
+ * so it costs no lazy chunk; an unknown stored name renders no icon.
  */
-
-const PatientTagPill = ({ tag }: { tag: PatientTagSummary }) => (
-  <Badge
-    style={{ "--tag-color": tag.color } as CSSProperties}
-    className="text-label bg-[color-mix(in_oklab,var(--tag-color)_16%,transparent)] text-[var(--tag-color)]"
-  >
-    {tag.label}
-  </Badge>
-);
 
 interface PatientTagsProps {
   tags: PatientTagSummary[];
@@ -48,7 +33,12 @@ export const PatientTags = ({
   return (
     <div className={cn("flex flex-wrap items-center gap-1", className)}>
       {visible.map((tag) => (
-        <PatientTagPill key={tag.id} tag={tag} />
+        <TagBadge
+          key={tag.id}
+          label={tag.label}
+          color={tag.color}
+          icon={getTagIcon(tag.icon)}
+        />
       ))}
       {hiddenCount > 0 && (
         <Badge variant="secondary" className="text-label">

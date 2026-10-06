@@ -4,7 +4,12 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
-import { Building2Icon, UsersIcon } from "lucide-react";
+import {
+  Building2Icon,
+  ShieldCheckIcon,
+  TagsIcon,
+  UsersIcon,
+} from "lucide-react";
 
 import { auth } from "@/lib/auth";
 import { CLINIC_SETTINGS_COPY } from "@/modules/clinic/constants";
@@ -13,12 +18,24 @@ import ClinicSettingsView, {
   ClinicSettingsViewError,
   ClinicSettingsViewLoading,
 } from "@/modules/clinic/ui/views/clinic-settings-view";
+import { INSURER_COPY } from "@/modules/insurers/constants";
+import InsurersListHeader from "@/modules/insurers/ui/list-header";
+import InsurersView, {
+  InsurersViewError,
+  InsurersViewLoading,
+} from "@/modules/insurers/ui/views/insurers-view";
 import { STAFF_COPY } from "@/modules/staff/constants";
 import StaffListHeader from "@/modules/staff/ui/list-header";
 import StaffView, {
   StaffViewError,
   StaffViewLoading,
 } from "@/modules/staff/ui/views/staff-view";
+import { TAG_COPY } from "@/modules/tags/constants";
+import TagsListHeader from "@/modules/tags/ui/list-header";
+import TagsView, {
+  TagsViewError,
+  TagsViewLoading,
+} from "@/modules/tags/ui/views/tags-view";
 import { getQueryClient, trpc } from "@/trpc/server";
 
 export const metadata: Metadata = {
@@ -37,6 +54,8 @@ const SettingsPage = async () => {
   const queryClient = getQueryClient();
   void queryClient.prefetchQuery(trpc.clinic.get.queryOptions());
   void queryClient.prefetchQuery(trpc.staff.getMany.queryOptions());
+  void queryClient.prefetchQuery(trpc.tags.getMany.queryOptions());
+  void queryClient.prefetchQuery(trpc.insurers.getMany.queryOptions());
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
@@ -64,6 +83,36 @@ const SettingsPage = async () => {
                 <Suspense fallback={<StaffViewLoading />}>
                   <ErrorBoundary fallback={<StaffViewError />}>
                     <StaffView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ),
+          },
+          {
+            id: "tags",
+            label: TAG_COPY.sectionTitle,
+            icon: <TagsIcon />,
+            content: (
+              <>
+                <TagsListHeader />
+                <Suspense fallback={<TagsViewLoading />}>
+                  <ErrorBoundary fallback={<TagsViewError />}>
+                    <TagsView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ),
+          },
+          {
+            id: "insurers",
+            label: INSURER_COPY.sectionTitle,
+            icon: <ShieldCheckIcon />,
+            content: (
+              <>
+                <InsurersListHeader />
+                <Suspense fallback={<InsurersViewLoading />}>
+                  <ErrorBoundary fallback={<InsurersViewError />}>
+                    <InsurersView />
                   </ErrorBoundary>
                 </Suspense>
               </>
