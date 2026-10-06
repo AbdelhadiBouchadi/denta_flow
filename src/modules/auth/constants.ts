@@ -1,11 +1,4 @@
-/**
- * Better Auth's own default for `emailAndPassword.minPasswordLength`.
- * Mirrored here so the Zod schema and the server agree: a form that accepts a
- * 6-character password only to have the API reject it is a bug the user pays for.
- */
-export const MIN_PASSWORD_LENGTH = 8;
-
-/** Where a successful sign-in or sign-up lands. */
+/** Where a successful sign-in lands. */
 export const AUTH_SUCCESS_REDIRECT = "/tableau-de-bord";
 
 /**
@@ -20,7 +13,8 @@ export const AUTH_SIGN_OUT_REDIRECT = "/connexion";
  * The code is the contract; the message is debug text. Only the French copy
  * below is ever rendered (AGENTS.md §5, 06-ui.md §10).
  *
- * Keys are Better Auth's `BASE_ERROR_CODES` plus the sign-up route's own code.
+ * Keys are Better Auth's `BASE_ERROR_CODES` that the sign-in route can return.
+ * Accounts are created by an admin in Paramètres › Utilisateurs, never here.
  * An unmapped code falls back to DEFAULT_AUTH_ERROR_MESSAGE rather than leaking
  * English into the UI.
  */
@@ -41,16 +35,6 @@ export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   FAILED_TO_CREATE_SESSION:
     "Ce compte a été désactivé. Contactez l’administrateur du cabinet.",
   SESSION_EXPIRED: "Session expirée. Veuillez vous reconnecter.",
-
-  // --- Sign-up ---
-  EMAIL_PASSWORD_SIGN_UP_DISABLED:
-    "La création de compte est désactivée. Demandez à l’administrateur du cabinet de vous créer un accès.",
-  USER_ALREADY_EXISTS: "Un compte existe déjà pour cette adresse e-mail.",
-  USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL:
-    "Un compte existe déjà pour cette adresse e-mail.",
-  PASSWORD_TOO_SHORT: `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`,
-  PASSWORD_TOO_LONG: "Le mot de passe est trop long.",
-  FAILED_TO_CREATE_USER: "La création du compte a échoué. Veuillez réessayer.",
 
   // --- Request-level refusals ---
   VALIDATION_ERROR: "Certains champs sont invalides. Vérifiez votre saisie.",

@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 
 import {
   Sidebar,
@@ -17,10 +16,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@/lib/env";
 import { ADMIN_ROLE, DASHBOARD_NAV_ITEMS } from "@/modules/dashboard/constants";
-import { ClinicLogo } from "@/modules/dashboard/ui/clinic-logo";
-import { useTRPC } from "@/trpc/client";
+import { ClinicBrand } from "@/modules/dashboard/ui/clinic-brand";
 
 /** `/patients` stays active on `/patients/abc`, but never on `/patientsX`. */
 const isActiveHref = (pathname: string, href: string) =>
@@ -31,14 +28,6 @@ export const AppSidebar = ({
 }: React.ComponentProps<typeof Sidebar>) => {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
-  const trpc = useTRPC();
-
-  // The brand reads the clinic row, prefetched by the dashboard layout.
-  // `useQuery`, not `useSuspenseQuery`: the sidebar sits outside every
-  // Suspense boundary, and until the row arrives (or if it fails) the
-  // deployment name and the fallback mark stand in (04-hydration.md §4 rule 8).
-  const { data: clinic } = useQuery(trpc.clinic.get.queryOptions());
-  const clinicName = clinic?.name || env.NEXT_PUBLIC_CLINIC_NAME;
 
   // The navbar and the sidebar both read the session from `authClient`: the
   // layout is structural and performs no session check of its own
@@ -68,18 +57,9 @@ export const AppSidebar = ({
               className="h-auto min-h-12 group-data-[collapsible=icon]:min-h-0 group-data-[collapsible=icon]:p-1.5!"
               render={<Link href="/tableau-de-bord" onClick={closeOnMobile} />}
             >
-              <ClinicLogo logoUrl={clinic?.logoUrl} />
-              {/* Up to two lines, then an ellipsis: a «Cabinet Dentaire Dr …»
-                  name is unreadable cut at one line. The button's variant
-                  truncates its last span from a parent selector, hence the
-                  `!`. `title` gives the full name back when even two lines
-                  are not enough. */}
-              <span
-                title={clinicName}
-                className="font-heading text-foreground line-clamp-2 text-base leading-tight font-semibold wrap-break-word whitespace-normal!"
-              >
-                {clinicName}
-              </span>
+              {/* The clinic row, suspended in its own boundary so the
+                  server and the browser render the same name. */}
+              <ClinicBrand />
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

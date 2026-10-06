@@ -12,8 +12,8 @@ describe("getAuthErrorMessage", () => {
     expect(getAuthErrorMessage("INVALID_EMAIL_OR_PASSWORD", 401)).toBe(
       "Adresse e-mail ou mot de passe incorrect.",
     );
-    expect(getAuthErrorMessage("EMAIL_PASSWORD_SIGN_UP_DISABLED", 400)).toBe(
-      AUTH_ERROR_MESSAGES.EMAIL_PASSWORD_SIGN_UP_DISABLED,
+    expect(getAuthErrorMessage("CREDENTIAL_ACCOUNT_NOT_FOUND", 401)).toBe(
+      AUTH_ERROR_MESSAGES.CREDENTIAL_ACCOUNT_NOT_FOUND,
     );
   });
 
@@ -37,8 +37,8 @@ describe("getAuthErrorMessage", () => {
   });
 
   it("prefers the code over the status when both are present", () => {
-    expect(getAuthErrorMessage("USER_ALREADY_EXISTS", 0)).toBe(
-      "Un compte existe déjà pour cette adresse e-mail.",
+    expect(getAuthErrorMessage("INVALID_EMAIL_OR_PASSWORD", 0)).toBe(
+      "Adresse e-mail ou mot de passe incorrect.",
     );
   });
 

@@ -5,13 +5,13 @@ interface Props {
 }
 
 /**
- * The chrome shared by /connexion and /inscription: no navbar, no sidebar, a
+ * The chrome of /connexion, the one (auth) route: no navbar, no sidebar, a
  * single centred column on the app background.
  *
  * It lives in the slice rather than in `(auth)/layout.tsx` because a file under
  * `src/app/` is a routing shell and carries no layout JSX of its own
  * (AGENTS.md §1.1). Server Component — nothing here is interactive, so the
- * client boundary stays inside the two forms (06-ui.md §9).
+ * client boundary stays inside the form (06-ui.md §9).
  */
 const AuthShell = ({ children }: Props) => {
   return (

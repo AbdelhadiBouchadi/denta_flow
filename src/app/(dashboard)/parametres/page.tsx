@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
-import { Building2Icon } from "lucide-react";
+import { Building2Icon, UsersIcon } from "lucide-react";
 
 import { auth } from "@/lib/auth";
 import { CLINIC_SETTINGS_COPY } from "@/modules/clinic/constants";
@@ -13,6 +13,12 @@ import ClinicSettingsView, {
   ClinicSettingsViewError,
   ClinicSettingsViewLoading,
 } from "@/modules/clinic/ui/views/clinic-settings-view";
+import { STAFF_COPY } from "@/modules/staff/constants";
+import StaffListHeader from "@/modules/staff/ui/list-header";
+import StaffView, {
+  StaffViewError,
+  StaffViewLoading,
+} from "@/modules/staff/ui/views/staff-view";
 import { getQueryClient, trpc } from "@/trpc/server";
 
 export const metadata: Metadata = {
@@ -30,6 +36,7 @@ const SettingsPage = async () => {
 
   const queryClient = getQueryClient();
   void queryClient.prefetchQuery(trpc.clinic.get.queryOptions());
+  void queryClient.prefetchQuery(trpc.staff.getMany.queryOptions());
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
@@ -45,6 +52,21 @@ const SettingsPage = async () => {
                   <ClinicSettingsView />
                 </ErrorBoundary>
               </Suspense>
+            ),
+          },
+          {
+            id: "users",
+            label: STAFF_COPY.sectionTitle,
+            icon: <UsersIcon />,
+            content: (
+              <>
+                <StaffListHeader />
+                <Suspense fallback={<StaffViewLoading />}>
+                  <ErrorBoundary fallback={<StaffViewError />}>
+                    <StaffView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
             ),
           },
         ]}
