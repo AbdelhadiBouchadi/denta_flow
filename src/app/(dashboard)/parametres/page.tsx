@@ -7,13 +7,21 @@ import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
 import type { SearchParams } from "nuqs/server";
 import {
   Building2Icon,
+  CalendarClockIcon,
   ClipboardListIcon,
+  ClockIcon,
   ShieldCheckIcon,
   TagsIcon,
   UsersIcon,
 } from "lucide-react";
 
 import { auth } from "@/lib/auth";
+import { APPOINTMENT_TYPE_COPY } from "@/modules/appointment-types/constants";
+import AppointmentTypesListHeader from "@/modules/appointment-types/ui/list-header";
+import AppointmentTypesView, {
+  AppointmentTypesViewError,
+  AppointmentTypesViewLoading,
+} from "@/modules/appointment-types/ui/views/appointment-types-view";
 import { CLINIC_SETTINGS_COPY } from "@/modules/clinic/constants";
 import SettingsShell from "@/modules/clinic/ui/settings-shell";
 import ClinicSettingsView, {
@@ -26,6 +34,13 @@ import InsurersView, {
   InsurersViewError,
   InsurersViewLoading,
 } from "@/modules/insurers/ui/views/insurers-view";
+import { SCHEDULE_COPY } from "@/modules/schedules/constants";
+import { loadSearchParams as loadSchedulesSearchParams } from "@/modules/schedules/params";
+import SchedulesListHeader from "@/modules/schedules/ui/list-header";
+import SchedulesView, {
+  SchedulesViewError,
+  SchedulesViewLoading,
+} from "@/modules/schedules/ui/views/schedules-view";
 import { SERVICE_COPY } from "@/modules/services/constants";
 import { loadSearchParams as loadServicesSearchParams } from "@/modules/services/params";
 import ServicesListHeader from "@/modules/services/ui/list-header";
@@ -61,8 +76,10 @@ interface Props {
 }
 
 const SettingsPage = async ({ searchParams }: Props) => {
-  // «Actes» is the one section with list filters in the URL.
+  // «Actes» and «Horaires» carry their own state in the URL; each slice
+  // loads its own keys.
   const servicesFilters = await loadServicesSearchParams(searchParams);
+  const schedulesFilters = await loadSchedulesSearchParams(searchParams);
 
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/connexion");
@@ -74,6 +91,21 @@ const SettingsPage = async ({ searchParams }: Props) => {
   void queryClient.prefetchQuery(trpc.insurers.getMany.queryOptions());
   void queryClient.prefetchQuery(
     trpc.services.getMany.queryOptions({ ...servicesFilters }),
+  );
+  void queryClient.prefetchQuery(trpc.appointmentTypes.getMany.queryOptions());
+  void queryClient.prefetchQuery(
+    trpc.schedules.getPractitioners.queryOptions(),
+  );
+  // "" means «not chosen»: the view sends null too, so the keys match.
+  void queryClient.prefetchQuery(
+    trpc.schedules.getWeek.queryOptions({
+      practitionerId: schedulesFilters.practitionerId || null,
+    }),
+  );
+  void queryClient.prefetchQuery(
+    trpc.schedules.getExceptions.queryOptions({
+      includePast: schedulesFilters.includePast,
+    }),
   );
 
   return (
@@ -147,6 +179,36 @@ const SettingsPage = async ({ searchParams }: Props) => {
                 <Suspense fallback={<ServicesViewLoading />}>
                   <ErrorBoundary fallback={<ServicesViewError />}>
                     <ServicesView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ),
+          },
+          {
+            id: "appointment-types",
+            label: APPOINTMENT_TYPE_COPY.sectionTitle,
+            icon: <CalendarClockIcon />,
+            content: (
+              <>
+                <AppointmentTypesListHeader />
+                <Suspense fallback={<AppointmentTypesViewLoading />}>
+                  <ErrorBoundary fallback={<AppointmentTypesViewError />}>
+                    <AppointmentTypesView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ),
+          },
+          {
+            id: "schedules",
+            label: SCHEDULE_COPY.sectionTitle,
+            icon: <ClockIcon />,
+            content: (
+              <>
+                <SchedulesListHeader />
+                <Suspense fallback={<SchedulesViewLoading />}>
+                  <ErrorBoundary fallback={<SchedulesViewError />}>
+                    <SchedulesView />
                   </ErrorBoundary>
                 </Suspense>
               </>
