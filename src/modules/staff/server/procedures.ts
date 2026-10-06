@@ -294,6 +294,15 @@ export const staffRouter = createTRPCRouter({
 
       if (!target) throw notFound();
 
+      await db
+        .delete(session)
+        .where(
+          and(
+            eq(session.userId, target.id),
+            ne(session.token, ctx.auth.session.token),
+          ),
+        );
+
       const authContext = await auth.$context;
       const temporaryPassword = generateTemporaryPassword();
       const hashed = await authContext.password.hash(temporaryPassword);
@@ -311,15 +320,6 @@ export const staffRouter = createTRPCRouter({
           password: hashed,
         });
       }
-
-      await db
-        .delete(session)
-        .where(
-          and(
-            eq(session.userId, target.id),
-            ne(session.token, ctx.auth.session.token),
-          ),
-        );
 
       return { user: target, temporaryPassword };
     }),
