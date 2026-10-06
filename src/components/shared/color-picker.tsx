@@ -4,28 +4,9 @@ import { CheckIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { cn } from "@/lib/utils";
+import { COLOR_PALETTE } from "./color-palette";
 
-/**
- * The design-system palette (06-ui.md §1), as swatches. Staff use it for their
- * agenda tint; tags will reuse it (branch 13).
- *
- * These are the one place a hex sits in a component, and on purpose: they are
- * not styling but the values written to a `color` column, which the agenda and
- * printed documents read back as data. A CSS variable cannot be stored, and a
- * token re-themed for dark mode would repaint saved rows. Each value is the
- * light-theme hex of the token named beside it. Upper-case, matching the
- * schema's normalisation.
- */
-export const COLOR_PALETTE = [
-  { value: "#0D9488", label: "Sarcelle" }, // --teal
-  { value: "#0F766E", label: "Sarcelle foncé" }, // --teal-dark
-  { value: "#2563EB", label: "Bleu" }, // --info
-  { value: "#16A34A", label: "Vert" }, // --success
-  { value: "#D97706", label: "Ambre" }, // --warning
-  { value: "#DC2626", label: "Rouge" }, // --danger
-  { value: "#1E293B", label: "Ardoise" }, // --slate-blue
-  { value: "#475569", label: "Gris ardoise" }, // --ink-secondary
-] as const;
+export { COLOR_PALETTE };
 
 /** A row saved before the palette existed (a seed value) keeps its colour. */
 const CURRENT_COLOR_LABEL = "Couleur actuelle";

@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DEFAULT_PAGE } from "@/constants";
+import { insurerOptionLabel } from "@/modules/insurers/options";
 import { useTRPC } from "@/trpc/client";
 import { usePatientsFilters } from "../hooks/use-patients-filters";
 import NewPatientDialog from "./new-patient-dialog";
@@ -118,7 +119,7 @@ const PatientsListHeader = () => {
           items={[
             { label: ALL_INSURERS_LABEL, value: null },
             ...(insurers?.items.map((insurer) => ({
-              label: insurer.name,
+              label: insurerOptionLabel(insurer),
               value: insurer.id,
             })) ?? []),
           ]}
@@ -130,7 +131,7 @@ const PatientsListHeader = () => {
             <SelectItem value={null}>{ALL_INSURERS_LABEL}</SelectItem>
             {insurers?.items.map((insurer) => (
               <SelectItem key={insurer.id} value={insurer.id}>
-                {insurer.name}
+                {insurerOptionLabel(insurer)}
               </SelectItem>
             ))}
           </SelectContent>
