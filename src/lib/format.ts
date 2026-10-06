@@ -80,3 +80,18 @@ export const formatPhone = (e164: string) =>
 
 /** FDI notation: "26" → "Dent 26". */
 export const formatTooth = (fdi: string) => `Dent ${fdi}`;
+
+/**
+ * The pager's range: (2, 10, 87) → "11–20 sur 87". A page past the end
+ * (after a delete) reads as the last real rows' bounds, never "91–87".
+ */
+export const formatPageRange = (
+  page: number,
+  pageSize: number,
+  total: number,
+) => {
+  if (total <= 0) return "0 sur 0";
+  const first = Math.min((page - 1) * pageSize + 1, total);
+  const last = Math.min(page * pageSize, total);
+  return `${first}–${last} sur ${total}`;
+};

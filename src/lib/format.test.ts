@@ -4,6 +4,7 @@ import {
   formatDate,
   formatDateTime,
   formatDH,
+  formatPageRange,
   formatPhone,
   formatTime,
   formatTooth,
@@ -146,5 +147,25 @@ describe("formatPhone", () => {
 describe("formatTooth", () => {
   it("labels an FDI number", () => {
     expect(formatTooth("26")).toBe("Dent 26");
+  });
+});
+
+describe("formatPageRange", () => {
+  it("reads the first, a middle and the last page", () => {
+    expect(formatPageRange(1, 10, 87)).toBe("1–10 sur 87");
+    expect(formatPageRange(2, 10, 87)).toBe("11–20 sur 87");
+    expect(formatPageRange(9, 10, 87)).toBe("81–87 sur 87");
+  });
+
+  it("handles an exact multiple of the page size", () => {
+    expect(formatPageRange(3, 10, 30)).toBe("21–30 sur 30");
+  });
+
+  it("never prints an inverted range past the end", () => {
+    expect(formatPageRange(12, 10, 87)).toBe("87–87 sur 87");
+  });
+
+  it("reads an empty list", () => {
+    expect(formatPageRange(1, 10, 0)).toBe("0 sur 0");
   });
 });
