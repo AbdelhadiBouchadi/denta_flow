@@ -36,6 +36,13 @@
       "when": 1791217753445,
       "tag": "0004_clinic_letterhead_url",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791282679558,
+      "tag": "0005_service_nomenclature_code",
+      "breakpoints": true
     }
   ]
 }

@@ -27,6 +27,7 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { nanoid } from "nanoid";
 
 import { CLINIC_TIMEZONE } from "../constants";
+import { getNgapAct } from "../modules/services/ngap";
 import { db } from "./index";
 import {
   activityLog,
@@ -230,186 +231,61 @@ type ServiceDef = {
   priceCents: number;
   duration: number;
   teeth: TeethMode;
+  /** The NGAP code, or null for an act the nomenclature does not cover. */
+  code: string | null;
   child?: boolean; // suitable for a child patient (adult-eligible unless childOnly)
   childOnly?: boolean;
 };
-const SERVICE_DEFS: ServiceDef[] = [
-  {
-    label: "Consultation",
-    category: "consultation",
-    priceCents: 15000,
-    duration: 30,
-    teeth: "none",
-    child: true,
-  },
-  {
-    label: "Consultation d’urgence",
-    category: "consultation",
-    priceCents: 20000,
-    duration: 30,
-    teeth: "none",
-    child: true,
-  },
-  {
-    label: "Radiographie rétro-alvéolaire",
-    category: "consultation",
-    priceCents: 10000,
-    duration: 15,
-    teeth: "one",
-    child: true,
-  },
-  {
-    label: "Radiographie panoramique",
-    category: "consultation",
-    priceCents: 30000,
-    duration: 15,
-    teeth: "none",
-  },
-  {
-    label: "Détartrage",
-    category: "periodontics",
-    priceCents: 30000,
-    duration: 45,
-    teeth: "none",
-    child: true,
-  },
-  {
-    label: "Surfaçage radiculaire (par quadrant)",
-    category: "periodontics",
-    priceCents: 60000,
-    duration: 60,
-    teeth: "none",
-  },
-  {
-    label: "Composite 1 face",
-    category: "restorative",
-    priceCents: 25000,
-    duration: 30,
-    teeth: "one",
-    child: true,
-  },
-  {
-    label: "Composite 2 faces",
-    category: "restorative",
-    priceCents: 35000,
-    duration: 45,
-    teeth: "one",
-    child: true,
-  },
-  {
-    label: "Composite 3 faces",
-    category: "restorative",
-    priceCents: 45000,
-    duration: 45,
-    teeth: "one",
-  },
-  {
-    label: "Amalgame",
-    category: "restorative",
-    priceCents: 20000,
-    duration: 30,
-    teeth: "one",
-  },
-  {
-    label: "Traitement de racine monoradiculaire",
-    category: "endodontics",
-    priceCents: 60000,
-    duration: 60,
-    teeth: "one",
-  },
-  {
-    label: "Traitement de racine biradiculaire",
-    category: "endodontics",
-    priceCents: 80000,
-    duration: 75,
-    teeth: "one",
-  },
-  {
-    label: "Traitement de racine pluriradiculaire",
-    category: "endodontics",
-    priceCents: 100000,
-    duration: 90,
-    teeth: "one",
-  },
-  {
-    label: "Pulpotomie (dent temporaire)",
-    category: "endodontics",
-    priceCents: 30000,
-    duration: 30,
-    teeth: "one",
-    child: true,
-    childOnly: true,
-  },
-  {
-    label: "Inlay-core",
-    category: "prosthetics",
-    priceCents: 80000,
-    duration: 45,
-    teeth: "one",
-  },
-  {
-    label: "Couronne céramo-métallique",
-    category: "prosthetics",
-    priceCents: 180000,
-    duration: 60,
-    teeth: "one",
-  },
-  {
-    label: "Couronne zircone",
-    category: "prosthetics",
-    priceCents: 300000,
-    duration: 60,
-    teeth: "one",
-  },
-  {
-    label: "Bridge 3 éléments céramo-métallique",
-    category: "prosthetics",
-    priceCents: 540000,
-    duration: 90,
-    teeth: "bridge",
-  },
-  {
-    label: "Prothèse amovible partielle résine",
-    category: "prosthetics",
-    priceCents: 250000,
-    duration: 45,
-    teeth: "none",
-  },
-  {
-    label: "Prothèse complète (par arcade)",
-    category: "prosthetics",
-    priceCents: 450000,
-    duration: 60,
-    teeth: "none",
-  },
-  {
-    label: "Extraction simple",
-    category: "surgery",
-    priceCents: 20000,
-    duration: 30,
-    teeth: "one",
-    child: true,
-  },
-  {
-    label: "Extraction dent de sagesse",
-    category: "surgery",
-    priceCents: 60000,
-    duration: 45,
-    teeth: "wisdom",
-  },
-  {
-    label: "Extraction dent de sagesse incluse",
-    category: "surgery",
-    priceCents: 120000,
-    duration: 90,
-    teeth: "wisdom",
-  },
+
+// Common acts, by NGAP code. Label, category and price come from the dataset:
+// the price is the NGAP REFERENCE tariff, used here only as a placeholder fee.
+// The clinic's real fees are entered in Paramètres › Actes before go-live.
+type NgapServiceDef = Pick<ServiceDef, "duration" | "teeth" | "child" | "childOnly"> & {
+  code: string;
+};
+const NGAP_SERVICE_DEFS: NgapServiceDef[] = [
+  { code: "C", duration: 30, teeth: "none", child: true },
+  { code: "D700", duration: 30, teeth: "one", child: true },
+  { code: "D701", duration: 30, teeth: "one", child: true },
+  { code: "D702", duration: 45, teeth: "one" },
+  { code: "D703", duration: 30, teeth: "one", child: true },
+  { code: "D704", duration: 60, teeth: "anterior" },
+  { code: "D705", duration: 75, teeth: "one" },
+  { code: "D706", duration: 90, teeth: "one" },
+  { code: "D707", duration: 45, teeth: "one" },
+  { code: "D708", duration: 45, teeth: "none", child: true },
+  { code: "D712", duration: 15, teeth: "one", child: true },
+  { code: "D713", duration: 30, teeth: "one" },
+  { code: "D714", duration: 15, teeth: "one" },
+  { code: "D717", duration: 45, teeth: "one" },
+  { code: "D720", duration: 90, teeth: "wisdom" },
+  { code: "D725", duration: 60, teeth: "wisdom" },
+  { code: "D743", duration: 60, teeth: "none" },
+  { code: "D748", duration: 60, teeth: "one" },
+  { code: "D749", duration: 60, teeth: "one" },
+  { code: "D754", duration: 60, teeth: "one" },
+  { code: "D761", duration: 45, teeth: "none" },
+  { code: "D773", duration: 60, teeth: "none" },
+  { code: "D774", duration: 60, teeth: "none" },
+  { code: "D900", duration: 60, teeth: "one" },
+  { code: "D910", duration: 45, teeth: "anterior" },
+  { code: "D626", duration: 45, teeth: "none", child: true },
+  { code: "D629", duration: 60, teeth: "none", child: true },
+  { code: "T151", duration: 15, teeth: "none" },
+  { code: "T153", duration: 15, teeth: "none", child: true },
+  { code: "T156", duration: 15, teeth: "one", child: true },
+];
+
+// Acts the NGAP does not cover — implantology and cosmetic stay represented.
+// `code: null`, and the price is an invented placeholder like every seed fee.
+const CLINIC_SERVICE_DEFS: ServiceDef[] = [
   {
     label: "Pose d’implant dentaire",
     category: "implantology",
     priceCents: 800000,
     duration: 90,
     teeth: "one",
+    code: null,
   },
   {
     label: "Couronne sur implant",
@@ -417,28 +293,7 @@ const SERVICE_DEFS: ServiceDef[] = [
     priceCents: 350000,
     duration: 60,
     teeth: "one",
-  },
-  {
-    label: "Bilan orthodontique",
-    category: "orthodontics",
-    priceCents: 40000,
-    duration: 45,
-    teeth: "none",
-    child: true,
-  },
-  {
-    label: "Traitement orthodontique multi-attaches (par semestre)",
-    category: "orthodontics",
-    priceCents: 600000,
-    duration: 60,
-    teeth: "none",
-  },
-  {
-    label: "Gouttière de contention",
-    category: "orthodontics",
-    priceCents: 150000,
-    duration: 30,
-    teeth: "none",
+    code: null,
   },
   {
     label: "Blanchiment dentaire",
@@ -446,21 +301,39 @@ const SERVICE_DEFS: ServiceDef[] = [
     priceCents: 250000,
     duration: 60,
     teeth: "none",
+    code: null,
   },
   {
-    label: "Facette céramique",
+    label: "Composite esthétique antérieur",
     category: "cosmetic",
-    priceCents: 350000,
+    priceCents: 60000,
+    duration: 45,
+    teeth: "anterior",
+    code: null,
+  },
+  {
+    label: "Facette composite",
+    category: "cosmetic",
+    priceCents: 120000,
     duration: 60,
     teeth: "anterior",
+    code: null,
   },
-  {
-    label: "Gouttière de bruxisme",
-    category: "other",
-    priceCents: 120000,
-    duration: 30,
-    teeth: "none",
-  },
+];
+
+const SERVICE_DEFS: ServiceDef[] = [
+  ...NGAP_SERVICE_DEFS.map(({ code, ...def }) => {
+    const act = getNgapAct(code);
+    if (!act) throw new Error(`Seed: NGAP code ${code} is not in the dataset`);
+    return {
+      ...def,
+      code,
+      label: act.designation,
+      category: act.suggestedCategory,
+      priceCents: act.referenceTariffCents,
+    };
+  }),
+  ...CLINIC_SERVICE_DEFS,
 ];
 // How often each category is performed — consultations and fillings dominate a real day.
 const CATEGORY_WEIGHT: Record<ServiceDef["category"], number> = {
@@ -926,6 +799,7 @@ async function main() {
       category: s.category,
       defaultPriceCents: s.priceCents,
       durationMinutes: s.duration,
+      nomenclatureCode: s.code,
     },
   }));
 

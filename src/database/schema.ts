@@ -219,6 +219,9 @@ export const services = pgTable("services", {
   defaultPriceCents: integer("default_price_cents").notNull().default(0),
   durationMinutes: integer("duration_minutes").notNull().default(30),
   isActive: boolean("is_active").notNull().default(true),
+  // NGAP code («D700», «C»…) — free text, NOT unique. Coefficient, letter and
+  // reference tariff are looked up from services/data/ngap-acts.json, never stored.
+  nomenclatureCode: text("nomenclature_code"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [index("services_category_idx").on(t.category)]);
