@@ -68,12 +68,17 @@ import {
 // written `WHERE ${treatments.patientId} = ${patients.id}` renders as
 // `WHERE "patient_id" = "id"`, which resolves inside the subquery and silently
 // returns zero for every row. The builder keeps its own WHERE fully qualified.
+//
+// The three balance figures are exported: the payments procedures read the
+// patient's balance through this SAME SQL (the overpayment check, the admin
+// totals), so the dossier and the «avance» confirmation can never disagree.
+// Each one correlates on `patients.id` — select it FROM patients.
 
 /**
  * Only billable actes are owed — the shared rule in src/database/sql/billable.ts
  * (in progress or completed; never planned, never canceled).
  */
-const totalAmountCents = sql<number>`COALESCE(${db
+export const totalAmountCents = sql<number>`COALESCE(${db
   .select({ value: sum(treatments.totalAmountCents) })
   .from(treatments)
   .where(and(eq(treatments.patientId, patients.id), isBillableTreatment))}, 0)::int`;
@@ -84,13 +89,13 @@ const plannedAmountCents = sql<number>`COALESCE(${db
   .from(treatments)
   .where(and(eq(treatments.patientId, patients.id), isPlannedTreatment))}, 0)::int`;
 
-const amountPaidCents = sql<number>`COALESCE(${db
+export const amountPaidCents = sql<number>`COALESCE(${db
   .select({ value: sum(payments.amountCents) })
   .from(payments)
   .where(eq(payments.patientId, patients.id))}, 0)::int`;
 
 /** May be negative — that is an «Avance». Never clamped (08-clinical.md §3). */
-const remainingCents = sql<number>`(${totalAmountCents} - ${amountPaidCents})::int`;
+export const remainingCents = sql<number>`(${totalAmountCents} - ${amountPaidCents})::int`;
 
 /**
  * An appointment that counts as the patient having been seen, or being

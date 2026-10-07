@@ -17,6 +17,7 @@ import PatientBreadcrumb from "../patient-breadcrumb";
 import PatientDossierHeader from "../patient-dossier-header";
 import PatientInformations from "../patient-informations";
 import PatientMedicalHistory from "../patient-medical-history";
+import PatientPayments from "../patient-payments";
 import PatientTreatments from "../patient-treatments";
 
 interface PatientIdViewProps {
@@ -32,14 +33,10 @@ const PENDING_TABS: Record<
     | PatientTab.MedicalHistory
     | PatientTab.Appointments
     | PatientTab.Treatments
+    | PatientTab.Payments
   >,
   { title: string; description: string }
 > = {
-  [PatientTab.Payments]: {
-    title: "Aucun paiement",
-    description:
-      "Les règlements du patient s’afficheront ici dès que les paiements seront disponibles.",
-  },
   [PatientTab.Documents]: {
     title: "Aucun document",
     description:
@@ -122,6 +119,11 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
                 here refreshes it through the patients invalidation. */}
             <TabsContent value={PatientTab.Treatments}>
               <PatientTreatments patient={patient} />
+            </TabsContent>
+
+            {/* The same strip as «Actes», from the same getOne. */}
+            <TabsContent value={PatientTab.Payments}>
+              <PatientPayments patient={patient} />
             </TabsContent>
 
             {Object.entries(PENDING_TABS).map(

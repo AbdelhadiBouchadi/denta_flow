@@ -13,9 +13,11 @@ import { useTRPC } from "@/trpc/client";
  * - `treatments.pathFilter()` — `/actes` pages, the dossier tab, `getOne`;
  * - `patients.pathFilter()` — an acte moves the patient's balance: the
  *   dossier header and strip («Total à payer», «Reste à payer», «Prévu») and
- *   the patients list's «Reste à payer».
+ *   the patients list's «Reste à payer»;
+ * - `payments.pathFilter()` — a payment row names its allocated acte, and
+ *   deleting an acte returns its payments to the patient account.
  *
- * Branch 20 adds `payments`. No `setQueryData`, no optimistic update on money.
+ * No `setQueryData`, no optimistic update on money.
  */
 export const useInvalidateTreatments = () => {
   const trpc = useTRPC();
@@ -25,6 +27,7 @@ export const useInvalidateTreatments = () => {
     await Promise.all([
       queryClient.invalidateQueries(trpc.treatments.pathFilter()),
       queryClient.invalidateQueries(trpc.patients.pathFilter()),
+      queryClient.invalidateQueries(trpc.payments.pathFilter()),
     ]);
   }, [queryClient, trpc]);
 };
