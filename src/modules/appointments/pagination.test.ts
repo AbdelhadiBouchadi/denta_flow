@@ -57,9 +57,13 @@ describe("page reset", () => {
   });
 
   it("resets on a range or view change too", () => {
-    expect(withPageReset({ date: "2026-03-12", view: CalendarView.Month })).toEqual(
-      { date: "2026-03-12", view: CalendarView.Month, page: DEFAULT_PAGE },
-    );
+    expect(
+      withPageReset({ date: "2026-03-12", view: CalendarView.Month }),
+    ).toEqual({
+      date: "2026-03-12",
+      view: CalendarView.Month,
+      page: DEFAULT_PAGE,
+    });
   });
 
   it("overrides a page passed alongside the change", () => {

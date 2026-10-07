@@ -3,14 +3,8 @@ import { describe, expect, it } from "vitest";
 import { canTransition, isTerminalStatus, nextStatuses } from "./status";
 import { AppointmentStatus } from "./types";
 
-const {
-  Planned,
-  Confirmed,
-  Arrived,
-  Completed,
-  Canceled,
-  NoShow,
-} = AppointmentStatus;
+const { Planned, Confirmed, Arrived, Completed, Canceled, NoShow } =
+  AppointmentStatus;
 
 const ALL = Object.values(AppointmentStatus);
 

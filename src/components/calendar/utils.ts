@@ -4,26 +4,32 @@ import { EndHour, StartHour } from "./constants";
 import type { CalendarEvent, EventColor } from "./types";
 
 /**
- * Get CSS classes for event colors
+ * Get CSS classes for event colors. Static strings, one per `EventColor`, so
+ * Tailwind sees every class. Swatches of the same hue (the two teals, the two
+ * slates) differ in fill strength; the slates use `zinc` for the lighter one,
+ * whose neutral grey reads apart from the blue-grey `slate`.
  */
 export function getEventColorClasses(color?: EventColor | string): string {
-  const eventColor = color || "sky";
-
-  switch (eventColor) {
-    case "sky":
-      return "bg-sky-200/50 hover:bg-sky-200/40 text-sky-950/80 dark:bg-sky-400/25 dark:hover:bg-sky-400/20 dark:text-sky-200 shadow-sky-700/8";
+  switch (color) {
+    case "teal":
+      return "bg-teal-200/50 hover:bg-teal-200/40 text-teal-950/80 dark:bg-teal-400/25 dark:hover:bg-teal-400/20 dark:text-teal-200 shadow-teal-700/8";
+    case "teal-dark":
+      return "bg-teal-500/45 hover:bg-teal-500/35 text-teal-950 dark:bg-teal-700/50 dark:hover:bg-teal-700/40 dark:text-teal-100 shadow-teal-900/8";
+    case "blue":
+      return "bg-blue-200/50 hover:bg-blue-200/40 text-blue-950/80 dark:bg-blue-400/25 dark:hover:bg-blue-400/20 dark:text-blue-200 shadow-blue-700/8";
+    case "green":
+      return "bg-green-200/50 hover:bg-green-200/40 text-green-950/80 dark:bg-green-400/25 dark:hover:bg-green-400/20 dark:text-green-200 shadow-green-700/8";
     case "amber":
       return "bg-amber-200/50 hover:bg-amber-200/40 text-amber-950/80 dark:bg-amber-400/25 dark:hover:bg-amber-400/20 dark:text-amber-200 shadow-amber-700/8";
-    case "violet":
-      return "bg-violet-200/50 hover:bg-violet-200/40 text-violet-950/80 dark:bg-violet-400/25 dark:hover:bg-violet-400/20 dark:text-violet-200 shadow-violet-700/8";
-    case "rose":
-      return "bg-rose-200/50 hover:bg-rose-200/40 text-rose-950/80 dark:bg-rose-400/25 dark:hover:bg-rose-400/20 dark:text-rose-200 shadow-rose-700/8";
-    case "emerald":
-      return "bg-emerald-200/50 hover:bg-emerald-200/40 text-emerald-950/80 dark:bg-emerald-400/25 dark:hover:bg-emerald-400/20 dark:text-emerald-200 shadow-emerald-700/8";
+    case "red":
+      return "bg-red-200/50 hover:bg-red-200/40 text-red-950/80 dark:bg-red-400/25 dark:hover:bg-red-400/20 dark:text-red-200 shadow-red-700/8";
+    case "slate":
+      return "bg-slate-400/45 hover:bg-slate-400/35 text-slate-950 dark:bg-slate-500/40 dark:hover:bg-slate-500/30 dark:text-slate-100 shadow-slate-900/8";
+    case "gray":
+      return "bg-zinc-200/70 hover:bg-zinc-200/55 text-zinc-900 dark:bg-zinc-400/25 dark:hover:bg-zinc-400/20 dark:text-zinc-200 shadow-zinc-700/8";
     case "orange":
-      return "bg-orange-200/50 hover:bg-orange-200/40 text-orange-950/80 dark:bg-orange-400/25 dark:hover:bg-orange-400/20 dark:text-orange-200 shadow-orange-700/8";
     default:
-      return "bg-sky-200/50 hover:bg-sky-200/40 text-sky-950/80 dark:bg-sky-400/25 dark:hover:bg-sky-400/20 dark:text-sky-200 shadow-sky-700/8";
+      return "bg-orange-200/50 hover:bg-orange-200/40 text-orange-950/80 dark:bg-orange-400/25 dark:hover:bg-orange-400/20 dark:text-orange-200 shadow-orange-700/8";
   }
 }
 
@@ -177,4 +183,46 @@ export function getVisibleHourRange(
   }
 
   return { endHour, startHour };
+}
+
+/**
+ * Side-by-side lanes for one day's timed events, given sorted by start
+ * (longest first on ties). Events that overlap — directly or through a chain —
+ * form a cluster; each takes the first lane free at its start, and the whole
+ * cluster shares one lane count, so it splits the column width evenly.
+ * Touching intervals (10:00–10:30, 10:30–11:00) do not overlap.
+ */
+export function assignOverlapLanes(
+  intervals: { start: Date; end: Date }[],
+): { lane: number; lanes: number }[] {
+  const result: { lane: number; lanes: number }[] = [];
+  let laneEnds: number[] = [];
+  let clusterFirst = 0;
+  let clusterEnd = Number.NEGATIVE_INFINITY;
+
+  const closeCluster = (until: number) => {
+    for (let index = clusterFirst; index < until; index++) {
+      result[index].lanes = laneEnds.length;
+    }
+  };
+
+  intervals.forEach(({ start, end }, index) => {
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+
+    if (startMs >= clusterEnd) {
+      closeCluster(index);
+      clusterFirst = index;
+      laneEnds = [];
+    }
+
+    let lane = laneEnds.findIndex((laneEnd) => laneEnd <= startMs);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = endMs;
+    clusterEnd = Math.max(clusterEnd, endMs);
+    result.push({ lane, lanes: 0 });
+  });
+
+  closeCluster(intervals.length);
+  return result;
 }

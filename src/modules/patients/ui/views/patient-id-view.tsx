@@ -12,6 +12,7 @@ import { PATIENT_TABS } from "../../constants";
 import { formatPatientName } from "../../derived";
 import { usePatientTab } from "../../hooks/use-patient-tab";
 import { PatientTab } from "../../types";
+import PatientAppointments from "../patient-appointments";
 import PatientBreadcrumb from "../patient-breadcrumb";
 import PatientDossierHeader from "../patient-dossier-header";
 import PatientInformations from "../patient-informations";
@@ -22,16 +23,16 @@ interface PatientIdViewProps {
   patientId: string;
 }
 
-/** Copy for the four tabs whose slices do not exist yet. */
+/** Copy for the three tabs whose slices do not exist yet. */
 const PENDING_TABS: Record<
-  Exclude<PatientTab, PatientTab.Informations | PatientTab.MedicalHistory>,
+  Exclude<
+    PatientTab,
+    | PatientTab.Informations
+    | PatientTab.MedicalHistory
+    | PatientTab.Appointments
+  >,
   { title: string; description: string }
 > = {
-  [PatientTab.Appointments]: {
-    title: "Aucun rendez-vous",
-    description:
-      "Les rendez-vous de ce patient s’afficheront ici dès que l’agenda sera disponible.",
-  },
   [PatientTab.Treatments]: {
     title: "Aucun acte",
     description:
@@ -86,16 +87,16 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
               that attribute, not on Radix's `data-[state=active]`, which never
               matches here. The line variant's own `after:` underline is
               switched off so there is exactly one active indicator. */}
-          <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="[scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden">
             <TabsList
               variant="line"
-              className="group-data-horizontal/tabs:h-auto w-max min-w-full justify-start rounded-none border-b bg-transparent p-0 px-4 md:px-6"
+              className="w-max min-w-full justify-start rounded-none border-b bg-transparent p-0 px-4 group-data-horizontal/tabs:h-auto md:px-6"
             >
               {PATIENT_TABS.map(({ value, label, icon: Icon }) => (
                 <TabsTrigger
                   key={value}
                   value={value}
-                  className="text-muted-foreground hover:text-foreground data-active:text-primary data-active:border-b-primary -mb-px h-12 flex-none gap-2 rounded-none border-x-transparent border-t-transparent border-b-2 border-b-transparent px-4 text-base font-medium after:hidden [&_svg:not([class*='size-'])]:size-5"
+                  className="text-muted-foreground hover:text-foreground data-active:text-primary data-active:border-b-primary -mb-px h-12 flex-none gap-2 rounded-none border-b-2 border-x-transparent border-t-transparent border-b-transparent px-4 text-base font-medium after:hidden [&_svg:not([class*='size-'])]:size-5"
                 >
                   <Icon />
                   {label}
@@ -113,6 +114,11 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
                 history refreshes its pills with no second query. */}
             <TabsContent value={PatientTab.MedicalHistory}>
               <PatientMedicalHistory patient={patient} />
+            </TabsContent>
+
+            {/* Its own query, prefetched by the page with the others. */}
+            <TabsContent value={PatientTab.Appointments}>
+              <PatientAppointments patient={patient} />
             </TabsContent>
 
             {Object.entries(PENDING_TABS).map(

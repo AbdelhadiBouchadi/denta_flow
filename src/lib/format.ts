@@ -63,6 +63,17 @@ export const parseDH = (input: string) => {
 export const formatDate = (d: ClinicDateInput) =>
   format(toClinicTime(d), "dd/MM/yyyy", { locale: fr });
 
+/**
+ * A calendar day "2026-10-02" → "02/10/2026". The value is already a clinic
+ * day, not an instant, so it is reformatted as text and never goes through a
+ * `Date`: `formatDate(parseISO(day))` takes the BROWSER's midnight and reads
+ * it on the clinic clock — the day before, anywhere east of the clinic.
+ */
+export const formatCalendarDate = (day: string) => {
+  const [year, month, date] = day.split("-");
+  return `${date}/${month}/${year}`;
+};
+
 /** 2026-06-15T12:00:00Z → "13 h 00", read on the clinic's wall clock. */
 export const formatTime = (d: ClinicDateInput) =>
   format(toClinicTime(d), "HH' h 'mm", { locale: fr });

@@ -27,22 +27,20 @@ import {
   user,
 } from "@/database/schema";
 import { formatTime } from "@/lib/format";
-import { clinicInstant } from "@/lib/time";
 import {
   adminProcedure,
   createTRPCRouter,
   protectedProcedure,
 } from "@/trpc/init";
 import { findBookingWarnings, type Interval } from "../booking";
+import { fromFormSlot } from "../form-values";
 import {
   APPOINTMENT_DEFAULT_DURATION,
   APPOINTMENT_SERVER_ERRORS,
   overlapMessage,
+  PATIENT_APPOINTMENTS_LIMIT,
 } from "../constants";
-import {
-  getRangeForView,
-  resolveAnchorDate,
-} from "../lib/get-range-for-view";
+import { getRangeForView, resolveAnchorDate } from "../lib/get-range-for-view";
 import {
   appointmentFormSchema,
   appointmentGetManySchema,
@@ -68,6 +66,7 @@ import {
   clinicDayOfStart,
 } from "./list-query";
 import { overlappingAppointment } from "./overlap";
+import { assertEditableBooking } from "./terminal-guard";
 
 /**
  * Appointments are created, moved and cancelled by clinic staff only. There
@@ -116,7 +115,9 @@ const resolveSlot = async (input: AppointmentValues): Promise<Interval> => {
 
   if (input.typeId) {
     const [type] = await db
-      .select({ defaultDurationMinutes: appointmentTypes.defaultDurationMinutes })
+      .select({
+        defaultDurationMinutes: appointmentTypes.defaultDurationMinutes,
+      })
       .from(appointmentTypes)
       .where(eq(appointmentTypes.id, input.typeId))
       .limit(1);
@@ -130,12 +131,8 @@ const resolveSlot = async (input: AppointmentValues): Promise<Interval> => {
     durationMinutes ??= type.defaultDurationMinutes;
   }
 
-  const startsAt = clinicInstant(input.date, input.time);
-  const endsAt = new Date(
-    startsAt.getTime() +
-      (durationMinutes ?? APPOINTMENT_DEFAULT_DURATION) * 60_000,
-  );
-  return { startsAt, endsAt };
+  // The inverse of the form's `toFormValues`, in the same module.
+  return fromFormSlot(input, durationMinutes ?? APPOINTMENT_DEFAULT_DURATION);
 };
 
 /**
@@ -187,7 +184,10 @@ const assertNoOverlap = async (
   if (clash) {
     throw new TRPCError({
       code: "CONFLICT",
-      message: overlapMessage(formatTime(clash.startsAt), formatTime(clash.endsAt)),
+      message: overlapMessage(
+        formatTime(clash.startsAt),
+        formatTime(clash.endsAt),
+      ),
     });
   }
 };
@@ -334,15 +334,24 @@ export const appointmentsRouter = createTRPCRouter({
       };
     }),
 
-  /** The dossier's «Rendez-vous» tab: the patient's whole history, newest first. */
+  /**
+   * The dossier's «Rendez-vous» tab: the patient's history, newest first,
+   * capped at `PATIENT_APPOINTMENTS_LIMIT` rows. `total` is counted in SQL, so
+   * the tab can say when the cap hides older ones.
+   */
   getManyByPatient: protectedProcedure
     .input(appointmentsByPatientSchema)
     .query(async ({ input }) => {
-      const items = await selectAppointments()
-        .where(eq(appointments.patientId, input.patientId))
-        .orderBy(desc(appointments.startsAt), desc(appointments.id));
+      const where = eq(appointments.patientId, input.patientId);
+      const [items, [totals]] = await Promise.all([
+        selectAppointments()
+          .where(where)
+          .orderBy(desc(appointments.startsAt), desc(appointments.id))
+          .limit(PATIENT_APPOINTMENTS_LIMIT),
+        db.select({ count: count() }).from(appointments).where(where),
+      ]);
 
-      return { items, total: items.length, totalPages: 1 };
+      return { items, total: totals.count, totalPages: 1 };
     }),
 
   getOne: protectedProcedure
@@ -375,7 +384,11 @@ export const appointmentsRouter = createTRPCRouter({
       ]);
 
       if (warnings.length > 0 && !input.confirmOutOfHours) {
-        return { requiresConfirmation: true as const, warnings, appointment: null };
+        return {
+          requiresConfirmation: true as const,
+          warnings,
+          appointment: null,
+        };
       }
 
       try {
@@ -403,7 +416,11 @@ export const appointmentsRouter = createTRPCRouter({
           })
           .returning();
 
-        return { requiresConfirmation: false as const, warnings, appointment: created };
+        return {
+          requiresConfirmation: false as const,
+          warnings,
+          appointment: created,
+        };
       } catch (error) {
         return rethrowAppointmentWriteError(error);
       }
@@ -412,7 +429,8 @@ export const appointmentsRouter = createTRPCRouter({
   /**
    * Moves or edits a booking. The same rules as `create`, excluding the row
    * itself from the overlap check. The status is untouched — see
-   * `updateStatus`.
+   * `updateStatus`. A terminal booking (completed, canceled, no-show) keeps
+   * its slot, practitioner, type and patient: only `reason` / `notes` save.
    *
    * Optimistic concurrency: the write is conditional on `expectedUpdatedAt`,
    * the version the editor loaded. The read below only feeds the booking
@@ -425,7 +443,9 @@ export const appointmentsRouter = createTRPCRouter({
       const [existing] = await db
         .select({
           status: appointments.status,
+          patientId: appointments.patientId,
           practitionerId: appointments.practitionerId,
+          typeId: appointments.typeId,
           startsAt: appointments.startsAt,
           endsAt: appointments.endsAt,
         })
@@ -436,6 +456,14 @@ export const appointmentsRouter = createTRPCRouter({
       if (!existing) throw notFound();
 
       const slot = await resolveSlot(input);
+      // Before any other rule: history is not rebooked. The pgEnum values and
+      // the TS enum are kept in lockstep (types.ts).
+      assertEditableBooking(existing.status as AppointmentStatus, existing, {
+        patientId: input.patientId,
+        practitionerId: input.practitionerId,
+        typeId: input.typeId,
+        ...slot,
+      });
       const slotChanged =
         existing.practitionerId !== input.practitionerId ||
         existing.startsAt.getTime() !== slot.startsAt.getTime() ||
@@ -453,7 +481,11 @@ export const appointmentsRouter = createTRPCRouter({
       ]);
 
       if (warnings.length > 0 && !input.confirmOutOfHours) {
-        return { requiresConfirmation: true as const, warnings, appointment: null };
+        return {
+          requiresConfirmation: true as const,
+          warnings,
+          appointment: null,
+        };
       }
 
       try {
@@ -481,10 +513,15 @@ export const appointmentsRouter = createTRPCRouter({
             return row;
           },
           exists: () => appointmentExists(input.id),
-          conflictMessage: APPOINTMENT_SERVER_ERRORS.appointmentChangedMeanwhile,
+          conflictMessage:
+            APPOINTMENT_SERVER_ERRORS.appointmentChangedMeanwhile,
         });
 
-        return { requiresConfirmation: false as const, warnings, appointment: updated };
+        return {
+          requiresConfirmation: false as const,
+          warnings,
+          appointment: updated,
+        };
       } catch (error) {
         if (error instanceof TRPCError) throw error;
         return rethrowAppointmentWriteError(error);

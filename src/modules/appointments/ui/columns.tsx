@@ -114,7 +114,9 @@ export const columns: ColumnDef<DataTableFeatures, AppointmentListItem>[] = [
   },
   {
     id: "actions",
-    header: () => <span className="sr-only">{APPOINTMENT_COPY.actionsLabel}</span>,
+    header: () => (
+      <span className="sr-only">{APPOINTMENT_COPY.actionsLabel}</span>
+    ),
     cell: ({ row }) => <AppointmentActions appointment={row.original} />,
   },
 ];

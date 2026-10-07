@@ -61,7 +61,10 @@ const createStore = () => {
       patch: { notes: string },
     ) => {
       const row = rows.get(id);
-      if (!row || Math.floor(row.updatedAtMicros / 1000) !== expected.getTime()) {
+      if (
+        !row ||
+        Math.floor(row.updatedAtMicros / 1000) !== expected.getTime()
+      ) {
         return undefined;
       }
       Object.assign(row, patch, { updatedAtMicros: tick() });
@@ -123,10 +126,17 @@ describe("update — the version token", () => {
     store.insert(seeded("a1"));
     const loaded = store.read("a1")!;
 
-    const saved = await saveNotes(store, "a1", loaded.updatedAt, "Apporter la radio");
+    const saved = await saveNotes(
+      store,
+      "a1",
+      loaded.updatedAt,
+      "Apporter la radio",
+    );
 
     expect(saved.notes).toBe("Apporter la radio");
-    expect(saved.updatedAt.getTime()).toBeGreaterThan(loaded.updatedAt.getTime());
+    expect(saved.updatedAt.getTime()).toBeGreaterThan(
+      loaded.updatedAt.getTime(),
+    );
   });
 
   it("rejects a stale token with CONFLICT and writes nothing", async () => {
@@ -137,7 +147,9 @@ describe("update — the version token", () => {
 
     // Tab B saves first; tab A still holds the version it loaded.
     await saveNotes(store, "a1", tabB.updatedAt, "Version B");
-    const error = await rejection(saveNotes(store, "a1", tabA.updatedAt, "Version A"));
+    const error = await rejection(
+      saveNotes(store, "a1", tabA.updatedAt, "Version A"),
+    );
 
     expect(error).toBeInstanceOf(TRPCError);
     expect(error.code).toBe("CONFLICT");
@@ -153,7 +165,9 @@ describe("update — the version token", () => {
     const loaded = store.read("a1")!;
     store.remove("a1");
 
-    const error = await rejection(saveNotes(store, "a1", loaded.updatedAt, "x"));
+    const error = await rejection(
+      saveNotes(store, "a1", loaded.updatedAt, "x"),
+    );
     expect(error.code).toBe("NOT_FOUND");
     expect(error.message).toBe(APPOINTMENT_SERVER_ERRORS.notFound);
   });
@@ -168,9 +182,9 @@ describe("update — the version token", () => {
       loaded.updatedAt.getTime() * 1000,
     );
     // …so the guard compares the column truncated to ms, and the save lands.
-    await expect(saveNotes(store, "a1", loaded.updatedAt, "ok")).resolves.toMatchObject(
-      { notes: "ok" },
-    );
+    await expect(
+      saveNotes(store, "a1", loaded.updatedAt, "ok"),
+    ).resolves.toMatchObject({ notes: "ok" });
   });
 
   it("a token is single-use: replaying it after a save is a CONFLICT", async () => {
@@ -179,7 +193,9 @@ describe("update — the version token", () => {
     const loaded = store.read("a1")!;
 
     await saveNotes(store, "a1", loaded.updatedAt, "1");
-    const error = await rejection(saveNotes(store, "a1", loaded.updatedAt, "2"));
+    const error = await rejection(
+      saveNotes(store, "a1", loaded.updatedAt, "2"),
+    );
     expect(error.code).toBe("CONFLICT");
   });
 });
@@ -217,7 +233,9 @@ describe("updateStatus — the status guard", () => {
 
     await changeStatus(store.statusStore, "a1", AppointmentStatus.Confirmed);
 
-    const error = await rejection(saveNotes(store, "a1", editor.updatedAt, "x"));
+    const error = await rejection(
+      saveNotes(store, "a1", editor.updatedAt, "x"),
+    );
     expect(error.code).toBe("CONFLICT");
   });
 
@@ -226,12 +244,18 @@ describe("updateStatus — the status guard", () => {
     store.insert(seeded("done", AppointmentStatus.Completed));
 
     expect(
-      (await rejection(changeStatus(store.statusStore, "nope", AppointmentStatus.Confirmed)))
-        .code,
+      (
+        await rejection(
+          changeStatus(store.statusStore, "nope", AppointmentStatus.Confirmed),
+        )
+      ).code,
     ).toBe("NOT_FOUND");
     expect(
-      (await rejection(changeStatus(store.statusStore, "done", AppointmentStatus.Planned)))
-        .code,
+      (
+        await rejection(
+          changeStatus(store.statusStore, "done", AppointmentStatus.Planned),
+        )
+      ).code,
     ).toBe("BAD_REQUEST");
   });
 });

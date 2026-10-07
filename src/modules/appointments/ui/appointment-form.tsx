@@ -37,17 +37,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { AGENDA_SLOT_MINUTES, WEEK_STARTS_ON } from "@/constants";
 import { getErrorMessage } from "@/lib/errors";
-import { formatDate } from "@/lib/format";
-import {
-  clinicNow,
-  toClinicDate,
-  toClinicWallClock,
-} from "@/lib/time";
+import { formatCalendarDate } from "@/lib/format";
+import { clinicNow } from "@/lib/time";
 import { formatPatientName } from "@/modules/patients/derived";
 import { useTRPC } from "@/trpc/client";
 import {
   APPOINTMENT_COPY,
-  APPOINTMENT_DEFAULT_DURATION,
   APPOINTMENT_DURATION_MAX,
   APPOINTMENT_DURATION_MIN,
   APPOINTMENT_DURATION_STEP,
@@ -55,6 +50,11 @@ import {
   APPOINTMENT_FIELD_PLACEHOLDERS as P,
   BOOKING_WARNING_LABELS,
 } from "../constants";
+import {
+  toFormValues,
+  type AppointmentFormDefaults,
+  type AppointmentPatientOption as PatientOption,
+} from "../form-values";
 import { useInvalidateAppointments } from "../hooks/use-invalidate-appointments";
 import {
   appointmentFormSchema,
@@ -69,15 +69,15 @@ const PATIENT_SEARCH_LIMIT = 20;
 interface AppointmentFormProps {
   /** Present ⇒ edit mode. One form, two modes (06-ui.md §5). */
   initialValues?: AppointmentListItem;
+  /** Create mode only; ignored when `initialValues` is present. */
+  defaultValues?: AppointmentFormDefaults;
+  /**
+   * Create mode only: the patient comes from `defaultValues.patient` and is
+   * shown, not picked — the dossier books for the patient it is open on.
+   */
+  lockPatient?: boolean;
   onSuccess?: () => void;
   onCancel?: () => void;
-}
-
-interface PatientOption {
-  id: string;
-  shortCode: string;
-  firstName: string;
-  lastName: string;
 }
 
 /** The fields that make up a slot: a warning is only valid for this slot. */
@@ -88,28 +88,6 @@ type SlotFields = Pick<
 
 const slotKey = ({ practitionerId, date, time, durationMinutes }: SlotFields) =>
   [practitionerId, date, time, durationMinutes].join("|");
-
-/** A stored booking read back on the clinic's wall clock, for the inputs. */
-const toFormValues = (
-  appointment?: AppointmentListItem,
-): AppointmentFormValues => ({
-  patientId: appointment?.patientId ?? "",
-  practitionerId: appointment?.practitionerId ?? "",
-  typeId: appointment?.typeId ?? null,
-  date: appointment
-    ? toClinicDate(appointment.startsAt)
-    : toClinicDate(clinicNow()),
-  time: appointment ? toClinicWallClock(appointment.startsAt) : "",
-  durationMinutes: appointment
-    ? Math.round(
-        (appointment.endsAt.getTime() - appointment.startsAt.getTime()) /
-          60_000,
-      )
-    : APPOINTMENT_DEFAULT_DURATION,
-  reason: appointment?.reason ?? "",
-  notes: appointment?.notes ?? "",
-  confirmOutOfHours: false,
-});
 
 const fromNumberInput = (value: string) =>
   value.trim() === "" ? Number.NaN : Number(value);
@@ -125,6 +103,8 @@ const PatientLabel = ({ patient }: { patient: PatientOption }) => (
 
 export const AppointmentForm = ({
   initialValues,
+  defaultValues,
+  lockPatient = false,
   onSuccess,
   onCancel,
 }: AppointmentFormProps) => {
@@ -132,12 +112,14 @@ export const AppointmentForm = ({
   const queryClient = useQueryClient();
   const invalidateAll = useInvalidateAppointments();
   const isEdit = !!initialValues;
+  const lockedPatient =
+    !isEdit && lockPatient ? (defaultValues?.patient ?? null) : null;
 
   // Typeahead state of a dialog, not page filter state — it is never part of
   // a prefetched query key.
   const [patientSearch, setPatientSearch] = useState("");
   const [pickedPatient, setPickedPatient] = useState<PatientOption | null>(
-    initialValues?.patient ?? null,
+    initialValues?.patient ?? defaultValues?.patient ?? null,
   );
   // The version token of the row being edited: the `updatedAt` the editor
   // loaded. It moves only when the editor is reloaded onto a newer version
@@ -163,11 +145,16 @@ export const AppointmentForm = ({
   const { data: practitioners } = useQuery(
     trpc.schedules.getPractitioners.queryOptions(),
   );
-  const { data: types } = useQuery(trpc.appointmentTypes.getMany.queryOptions());
+  const { data: types } = useQuery(
+    trpc.appointmentTypes.getMany.queryOptions(),
+  );
 
   const form = useForm<AppointmentFormValues, unknown, AppointmentValues>({
     resolver: zodResolver(appointmentFormSchema),
-    defaultValues: toFormValues(initialValues),
+    defaultValues: toFormValues(
+      initialValues,
+      initialValues ? undefined : defaultValues,
+    ),
   });
 
   const [practitionerId, date, time, durationMinutes] = useWatch({
@@ -210,7 +197,10 @@ export const AppointmentForm = ({
   ) => {
     if (result.requiresConfirmation) {
       // Nothing was written: show why, and let the next submit confirm.
-      setPendingWarnings({ key: slotKey(variables), warnings: result.warnings });
+      setPendingWarnings({
+        key: slotKey(variables),
+        warnings: result.warnings,
+      });
       return;
     }
     await invalidateAll();
@@ -316,239 +306,295 @@ export const AppointmentForm = ({
     <form
       onSubmit={form.handleSubmit(onSubmit)}
       noValidate
-      className="flex max-h-[70vh] flex-col gap-6 overflow-y-auto px-4"
+      // A size container: the rows switch on the FORM's width, not the
+      // viewport's — the same form sits in a 32rem dialog, the agenda's side
+      // sheet and a phone-width drawer.
+      className="@container flex min-h-0 flex-1 flex-col gap-4"
     >
-      <FieldGroup className="gap-4">
-        <Controller
-          control={form.control}
-          name="patientId"
-          render={({ field, fieldState }) => (
-            <Field data-invalid={fieldState.invalid}>
-              <FieldLabel htmlFor={field.name}>{L.patient}</FieldLabel>
-              <CommandSelect
-                value={field.value}
-                placeholder={P.patient}
-                onSearch={setPatientSearch}
-                onSelect={(value) => {
-                  setPickedPatient(
-                    patientOptions.find((patient) => patient.id === value) ??
-                      null,
-                  );
-                  field.onChange(value);
-                }}
-                options={patientOptions.map((patient) => ({
-                  id: patient.id,
-                  value: patient.id,
-                  children: <PatientLabel patient={patient} />,
-                }))}
-                className="w-full"
-              />
-              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-            </Field>
-          )}
-        />
-
-        <div className="grid gap-4 sm:grid-cols-2">
+      {/* Only the fields scroll, and only vertically, so the actions stay in
+          view. Capped at 70vh in a dialog or drawer; the agenda's sheet is
+          already full height and bounds it itself. */}
+      <div className="flex max-h-[70vh] min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 in-data-[slot=sheet-content]:max-h-none">
+        <FieldGroup className="gap-4">
           <Controller
             control={form.control}
-            name="practitionerId"
+            name="patientId"
             render={({ field, fieldState }) => (
               <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor={field.name}>{L.practitioner}</FieldLabel>
-                <Select
-                  id={field.name}
-                  value={field.value || null}
-                  onValueChange={(value) => field.onChange(value ?? "")}
-                  disabled={isPending}
-                  items={practitionerOptions.map((p) => ({
-                    label: p.name,
-                    value: p.id,
-                  }))}
-                >
-                  <SelectTrigger
-                    size="default"
-                    aria-invalid={fieldState.invalid}
-                    className="h-9 w-full"
+                <FieldLabel htmlFor={field.name}>{L.patient}</FieldLabel>
+                {lockedPatient ? (
+                  // Booked from the patient's own dossier: shown, not picked.
+                  <div
+                    id={field.name}
+                    aria-readonly="true"
+                    className="border-input bg-muted/50 flex h-9 w-full min-w-0 items-center rounded-md border px-3 text-sm"
                   >
-                    <SelectValue placeholder={P.practitioner} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {practitionerOptions.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {fieldState.invalid && (
-                  <FieldError errors={[fieldState.error]} />
-                )}
-              </Field>
-            )}
-          />
-
-          <Controller
-            control={form.control}
-            name="typeId"
-            render={({ field, fieldState }) => (
-              <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor={field.name}>{L.type}</FieldLabel>
-                <Select
-                  id={field.name}
-                  value={field.value ?? null}
-                  onValueChange={(value) => {
-                    field.onChange(value);
-                    // The duration defaults from the type; the staff member
-                    // may still override it below (08-clinical.md §4 rule 9).
-                    const type = typeOptions.find((t) => t.id === value);
-                    if (type) {
-                      form.setValue(
-                        "durationMinutes",
-                        type.defaultDurationMinutes,
-                        { shouldValidate: true },
+                    <PatientLabel patient={lockedPatient} />
+                  </div>
+                ) : (
+                  <CommandSelect
+                    value={field.value}
+                    placeholder={P.patient}
+                    onSearch={setPatientSearch}
+                    onSelect={(value) => {
+                      setPickedPatient(
+                        patientOptions.find(
+                          (patient) => patient.id === value,
+                        ) ?? null,
                       );
-                    }
-                  }}
-                  disabled={isPending}
-                  items={[
-                    { label: P.type, value: null },
-                    ...typeOptions.map((type) => ({
-                      label: type.label,
-                      value: type.id,
-                    })),
-                  ]}
-                >
-                  <SelectTrigger
-                    size="default"
-                    aria-invalid={fieldState.invalid}
-                    className="h-9 w-full"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={null}>{P.type}</SelectItem>
-                    {typeOptions.map((type) => (
-                      <SelectItem key={type.id} value={type.id}>
-                        <span
-                          aria-hidden="true"
-                          style={{ "--type-color": type.color } as CSSProperties}
-                          className="size-2.5 shrink-0 rounded-full bg-[var(--type-color)]"
-                        />
-                        {type.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                      field.onChange(value);
+                    }}
+                    options={patientOptions.map((patient) => ({
+                      id: patient.id,
+                      value: patient.id,
+                      children: <PatientLabel patient={patient} />,
+                    }))}
+                    className="w-full"
+                  />
+                )}
                 {fieldState.invalid && (
                   <FieldError errors={[fieldState.error]} />
                 )}
               </Field>
             )}
           />
-        </div>
 
-        <div className="grid gap-4 sm:grid-cols-[1fr_auto_auto]">
-          <Controller
-            control={form.control}
-            name="date"
-            render={({ field, fieldState }) => (
-              <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor={field.name}>{L.date}</FieldLabel>
-                {/* The picker's Dates are only read for their calendar
+          <div className="grid gap-4 @md:grid-cols-2 [&>*]:min-w-0">
+            <Controller
+              control={form.control}
+              name="practitionerId"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>{L.practitioner}</FieldLabel>
+                  <Select
+                    id={field.name}
+                    value={field.value || null}
+                    onValueChange={(value) => field.onChange(value ?? "")}
+                    disabled={isPending}
+                    items={practitionerOptions.map((p) => ({
+                      label: p.name,
+                      value: p.id,
+                    }))}
+                  >
+                    <SelectTrigger
+                      size="default"
+                      aria-invalid={fieldState.invalid}
+                      className="h-9 w-full"
+                    >
+                      <SelectValue placeholder={P.practitioner} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {practitionerOptions.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+
+            <Controller
+              control={form.control}
+              name="typeId"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>{L.type}</FieldLabel>
+                  <Select
+                    id={field.name}
+                    value={field.value ?? null}
+                    onValueChange={(value) => {
+                      field.onChange(value);
+                      // The duration defaults from the type; the staff member
+                      // may still override it below (08-clinical.md §4 rule 9).
+                      const type = typeOptions.find((t) => t.id === value);
+                      if (type) {
+                        form.setValue(
+                          "durationMinutes",
+                          type.defaultDurationMinutes,
+                          { shouldValidate: true },
+                        );
+                      }
+                    }}
+                    disabled={isPending}
+                    items={[
+                      { label: P.type, value: null },
+                      ...typeOptions.map((type) => ({
+                        label: type.label,
+                        value: type.id,
+                      })),
+                    ]}
+                  >
+                    <SelectTrigger
+                      size="default"
+                      aria-invalid={fieldState.invalid}
+                      className="h-9 w-full"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={null}>{P.type}</SelectItem>
+                      {typeOptions.map((type) => (
+                        <SelectItem key={type.id} value={type.id}>
+                          <span
+                            aria-hidden="true"
+                            style={
+                              { "--type-color": type.color } as CSSProperties
+                            }
+                            className="size-2.5 shrink-0 rounded-full bg-[var(--type-color)]"
+                          />
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+          </div>
+
+          {/* Narrow: the date on its own row, then hour:minute and duration.
+            From 28rem of form width: all three on one row. */}
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 @md:grid-cols-[minmax(0,1fr)_auto_auto] [&>*]:min-w-0">
+            <Controller
+              control={form.control}
+              name="date"
+              render={({ field, fieldState }) => (
+                <Field
+                  data-invalid={fieldState.invalid}
+                  className="col-span-2 @md:col-span-1"
+                >
+                  <FieldLabel htmlFor={field.name}>{L.date}</FieldLabel>
+                  {/* The picker's Dates are only read for their calendar
                     fields, as "yyyy-MM-dd"; the instant is resolved on the
                     server through the clinic timezone. */}
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        id={field.name}
-                        type="button"
-                        variant="outline"
-                        size="lg"
-                        disabled={isPending}
-                        aria-invalid={fieldState.invalid}
-                        className="w-full justify-between font-normal tabular-nums"
+                  <Popover>
+                    <PopoverTrigger
+                      render={
+                        <Button
+                          id={field.name}
+                          type="button"
+                          variant="outline"
+                          size="lg"
+                          disabled={isPending}
+                          aria-invalid={fieldState.invalid}
+                          className="w-full justify-between font-normal tabular-nums"
+                        />
+                      }
+                    >
+                      {/* The value is already a clinic day: reformatted as
+                        text, never re-read through a Date and a zone. */}
+                      {field.value ? (
+                        formatCalendarDate(field.value)
+                      ) : (
+                        <span className="text-muted-foreground">{P.date}</span>
+                      )}
+                      <CalendarIcon className="text-muted-foreground" />
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        locale={fr}
+                        weekStartsOn={WEEK_STARTS_ON}
+                        defaultMonth={
+                          field.value ? parseISO(field.value) : clinicNow()
+                        }
+                        selected={
+                          field.value ? parseISO(field.value) : undefined
+                        }
+                        onSelect={(day) =>
+                          field.onChange(day ? format(day, "yyyy-MM-dd") : "")
+                        }
                       />
+                    </PopoverContent>
+                  </Popover>
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+
+            <Controller
+              control={form.control}
+              name="time"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>{L.time}</FieldLabel>
+                  <TimeField
+                    id={field.name}
+                    value={field.value}
+                    onChange={field.onChange}
+                    minuteStep={AGENDA_SLOT_MINUTES}
+                    disabled={isPending}
+                    aria-invalid={fieldState.invalid}
+                    aria-label={L.time}
+                  />
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+
+            <Controller
+              control={form.control}
+              name="durationMinutes"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>{L.duration}</FieldLabel>
+                  <Input
+                    id={field.name}
+                    name={field.name}
+                    ref={field.ref}
+                    type="number"
+                    inputMode="numeric"
+                    min={APPOINTMENT_DURATION_MIN}
+                    max={APPOINTMENT_DURATION_MAX}
+                    step={APPOINTMENT_DURATION_STEP}
+                    value={
+                      field.value == null || Number.isNaN(field.value)
+                        ? ""
+                        : field.value
                     }
-                  >
-                    {field.value ? (
-                      formatDate(parseISO(field.value))
-                    ) : (
-                      <span className="text-muted-foreground">{P.date}</span>
-                    )}
-                    <CalendarIcon className="text-muted-foreground" />
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0">
-                    <Calendar
-                      mode="single"
-                      locale={fr}
-                      weekStartsOn={WEEK_STARTS_ON}
-                      defaultMonth={
-                        field.value ? parseISO(field.value) : clinicNow()
-                      }
-                      selected={field.value ? parseISO(field.value) : undefined}
-                      onSelect={(day) =>
-                        field.onChange(day ? format(day, "yyyy-MM-dd") : "")
-                      }
-                    />
-                  </PopoverContent>
-                </Popover>
-                {fieldState.invalid && (
-                  <FieldError errors={[fieldState.error]} />
-                )}
-              </Field>
-            )}
-          />
+                    onChange={(event) =>
+                      field.onChange(fromNumberInput(event.target.value))
+                    }
+                    onBlur={field.onBlur}
+                    disabled={isPending}
+                    aria-invalid={fieldState.invalid}
+                    className="h-9 w-28 tabular-nums"
+                  />
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+          </div>
 
           <Controller
             control={form.control}
-            name="time"
+            name="reason"
             render={({ field, fieldState }) => (
               <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor={field.name}>{L.time}</FieldLabel>
-                <TimeField
-                  id={field.name}
-                  value={field.value}
-                  onChange={field.onChange}
-                  minuteStep={AGENDA_SLOT_MINUTES}
-                  disabled={isPending}
-                  aria-invalid={fieldState.invalid}
-                  aria-label={L.time}
-                />
-                {fieldState.invalid && (
-                  <FieldError errors={[fieldState.error]} />
-                )}
-              </Field>
-            )}
-          />
-
-          <Controller
-            control={form.control}
-            name="durationMinutes"
-            render={({ field, fieldState }) => (
-              <Field data-invalid={fieldState.invalid}>
-                <FieldLabel htmlFor={field.name}>{L.duration}</FieldLabel>
+                <FieldLabel htmlFor={field.name}>{L.reason}</FieldLabel>
                 <Input
+                  {...field}
                   id={field.name}
-                  name={field.name}
-                  ref={field.ref}
-                  type="number"
-                  inputMode="numeric"
-                  min={APPOINTMENT_DURATION_MIN}
-                  max={APPOINTMENT_DURATION_MAX}
-                  step={APPOINTMENT_DURATION_STEP}
-                  value={
-                    field.value == null || Number.isNaN(field.value)
-                      ? ""
-                      : field.value
-                  }
-                  onChange={(event) =>
-                    field.onChange(fromNumberInput(event.target.value))
-                  }
-                  onBlur={field.onBlur}
+                  value={field.value ?? ""}
+                  autoComplete="off"
                   disabled={isPending}
                   aria-invalid={fieldState.invalid}
-                  className="h-9 w-28 tabular-nums"
+                  placeholder={P.reason}
+                  className="h-9"
                 />
                 {fieldState.invalid && (
                   <FieldError errors={[fieldState.error]} />
@@ -556,68 +602,49 @@ export const AppointmentForm = ({
               </Field>
             )}
           />
-        </div>
 
-        <Controller
-          control={form.control}
-          name="reason"
-          render={({ field, fieldState }) => (
-            <Field data-invalid={fieldState.invalid}>
-              <FieldLabel htmlFor={field.name}>{L.reason}</FieldLabel>
-              <Input
-                {...field}
-                id={field.name}
-                value={field.value ?? ""}
-                autoComplete="off"
-                disabled={isPending}
-                aria-invalid={fieldState.invalid}
-                placeholder={P.reason}
-                className="h-9"
-              />
-              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-            </Field>
-          )}
-        />
+          <Controller
+            control={form.control}
+            name="notes"
+            render={({ field, fieldState }) => (
+              <Field data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor={field.name}>{L.notes}</FieldLabel>
+                <Textarea
+                  {...field}
+                  id={field.name}
+                  value={field.value ?? ""}
+                  rows={3}
+                  disabled={isPending}
+                  aria-invalid={fieldState.invalid}
+                  placeholder={P.notes}
+                />
+                {fieldState.invalid && (
+                  <FieldError errors={[fieldState.error]} />
+                )}
+              </Field>
+            )}
+          />
+        </FieldGroup>
 
-        <Controller
-          control={form.control}
-          name="notes"
-          render={({ field, fieldState }) => (
-            <Field data-invalid={fieldState.invalid}>
-              <FieldLabel htmlFor={field.name}>{L.notes}</FieldLabel>
-              <Textarea
-                {...field}
-                id={field.name}
-                value={field.value ?? ""}
-                rows={3}
-                disabled={isPending}
-                aria-invalid={fieldState.invalid}
-                placeholder={P.notes}
-              />
-              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-            </Field>
-          )}
-        />
-      </FieldGroup>
+        {warnings.length > 0 && (
+          <Alert role="alert" className="border-warning bg-warning-subtle">
+            <TriangleAlertIcon className="text-warning-strong" />
+            <AlertTitle className="text-warning-strong">
+              {APPOINTMENT_COPY.warningTitle}
+            </AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc pl-4">
+                {warnings.map((warning) => (
+                  <li key={warning}>{BOOKING_WARNING_LABELS[warning]}</li>
+                ))}
+              </ul>
+              <p>{APPOINTMENT_COPY.warningHint}</p>
+            </AlertDescription>
+          </Alert>
+        )}
+      </div>
 
-      {warnings.length > 0 && (
-        <Alert role="alert" className="border-warning bg-warning-subtle">
-          <TriangleAlertIcon className="text-warning-strong" />
-          <AlertTitle className="text-warning-strong">
-            {APPOINTMENT_COPY.warningTitle}
-          </AlertTitle>
-          <AlertDescription>
-            <ul className="list-disc pl-4">
-              {warnings.map((warning) => (
-                <li key={warning}>{BOOKING_WARNING_LABELS[warning]}</li>
-              ))}
-            </ul>
-            <p>{APPOINTMENT_COPY.warningHint}</p>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+      <div className="flex flex-col-reverse gap-2 px-4 in-data-[slot=sheet-content]:pb-4 @md:flex-row @md:justify-end">
         {onCancel && (
           <Button
             type="button"
@@ -625,7 +652,7 @@ export const AppointmentForm = ({
             size="lg"
             disabled={isPending}
             onClick={onCancel}
-            className="w-full sm:w-auto"
+            className="w-full @md:w-auto"
           >
             {APPOINTMENT_COPY.cancel}
           </Button>
@@ -634,7 +661,7 @@ export const AppointmentForm = ({
           type="submit"
           size="lg"
           disabled={isPending}
-          className="w-full sm:w-auto"
+          className="w-full @md:w-auto"
         >
           {isPending && <Spinner aria-label={submitLabel} />}
           {submitLabel}
