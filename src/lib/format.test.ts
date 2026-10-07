@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describeBalance,
   formatCalendarDate,
   formatDate,
   formatDateTime,
@@ -173,5 +174,40 @@ describe("formatPageRange", () => {
 
   it("reads an empty list", () => {
     expect(formatPageRange(1, 10, 0)).toBe("0 sur 0");
+  });
+});
+
+describe("describeBalance", () => {
+  it("presents an amount owed as «Reste à payer»", () => {
+    expect(describeBalance(43800)).toEqual({
+      kind: "due",
+      label: "Reste à payer",
+      amountCents: 43800,
+    });
+  });
+
+  it("keeps a settled balance as «Reste à payer» 0", () => {
+    expect(describeBalance(0)).toEqual({
+      kind: "due",
+      label: "Reste à payer",
+      amountCents: 0,
+    });
+  });
+
+  it("presents an overpayment as «Avance», positive, never clamped", () => {
+    const balance = describeBalance(-250000);
+    expect(balance).toEqual({
+      kind: "credit",
+      label: "Avance",
+      amountCents: 250000,
+    });
+    expect(formatDH(balance.amountCents)).toBe("2 500,00 DH");
+  });
+
+  it("calls one centime overpaid an «Avance» of 0,01 DH", () => {
+    const balance = describeBalance(-1);
+    expect(balance.kind).toBe("credit");
+    expect(balance.amountCents).toBe(1);
+    expect(formatDH(balance.amountCents)).toBe("0,01 DH");
   });
 });

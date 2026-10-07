@@ -85,9 +85,11 @@ export const columns: ColumnDef<DataTableFeatures, PatientListItem>[] = [
     header: () => <RightAligned>Reste à payer</RightAligned>,
     cell: ({ row }) => (
       <RightAligned>
+        {/* «Avance 2 500,00 DH» under a «Reste à payer» heading. */}
         <PaymentAmount
           cents={row.original.remainingCents}
           status={getPaymentStatus(row.original)}
+          showCreditLabel
         />
       </RightAligned>
     ),

@@ -43,6 +43,13 @@
       "when": 1791282679558,
       "tag": "0005_service_nomenclature_code",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791364815511,
+      "tag": "0006_treatment_nomenclature_code",
+      "breakpoints": true
     }
   ]
 }

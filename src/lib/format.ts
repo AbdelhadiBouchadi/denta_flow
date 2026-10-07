@@ -43,6 +43,37 @@ export const formatDH = (cents: number) => {
   return `${amount} ${CURRENCY_SUFFIX}`;
 };
 
+/** The two ways a balance reads (08-clinical.md §3). */
+export const BALANCE_LABELS = {
+  due: "Reste à payer",
+  credit: "Avance",
+} as const;
+
+export type BalanceKind = keyof typeof BALANCE_LABELS;
+
+export interface BalanceDescription {
+  kind: BalanceKind;
+  /** «Reste à payer» or «Avance» — already French. */
+  label: string;
+  /** Always ≥ 0: an «Avance» reads as a positive amount, never «−2 500,00 DH». */
+  amountCents: number;
+}
+
+/**
+ * How a `remainingCents` the SERVER computed is presented — every balance on
+ * screen goes through this. It does no arithmetic on the figures: ≥ 0 is
+ * owed («Reste à payer», 0,00 DH included); < 0 is an overpayment, an
+ * «Avance», shown as its absolute value. Never clamped to zero.
+ */
+export const describeBalance = (remainingCents: number): BalanceDescription =>
+  remainingCents < 0
+    ? {
+        kind: "credit",
+        label: BALANCE_LABELS.credit,
+        amountCents: Math.abs(remainingCents),
+      }
+    : { kind: "due", label: BALANCE_LABELS.due, amountCents: remainingCents };
+
 /**
  * "1 250,00" | "1250.5" → 125000. The single parse point for money input:
  * `MoneyInput` calls it, nothing else in the UI does.

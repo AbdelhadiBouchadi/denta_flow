@@ -7,6 +7,7 @@ import { schedulesRouter } from "@/modules/schedules/server/procedures";
 import { servicesRouter } from "@/modules/services/server/procedures";
 import { staffRouter } from "@/modules/staff/server/procedures";
 import { tagsRouter } from "@/modules/tags/server/procedures";
+import { treatmentsRouter } from "@/modules/treatments/server/procedures";
 
 import { createTRPCRouter } from "../init";
 
@@ -28,6 +29,7 @@ export const appRouter = createTRPCRouter({
   appointmentTypes: appointmentTypesRouter,
   schedules: schedulesRouter,
   appointments: appointmentsRouter,
+  treatments: treatmentsRouter,
 });
 
 export type AppRouter = typeof appRouter;

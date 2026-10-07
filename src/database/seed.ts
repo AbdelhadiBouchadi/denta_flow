@@ -1085,6 +1085,8 @@ async function main() {
         practitionerId:
           (visit?.practitionerId as string | undefined) ?? pick(dentistIds),
         label: service.row.label,
+        // Snapshot, like label and price (prompts/19-actes.md).
+        nomenclatureCode: service.row.nomenclatureCode,
         teeth: teethFor(service.def.teeth, childIds.has(patient.id)),
         totalAmountCents: service.row.defaultPriceCents,
         status,
@@ -1095,6 +1097,75 @@ async function main() {
       });
     }
   }
+
+  // Every case the actes screens must render, whatever the dice gave — fixed
+  // up BEFORE payments are built, so the balances stay consistent.
+  const adultActs = treatmentRows.filter((t) => !childIds.has(t.patientId));
+  const unused = (t: NewTreatment) => !guaranteed.has(t.id);
+  const guaranteed = new Set<string>();
+  const ensure = (
+    holds: (t: NewTreatment) => boolean,
+    candidate: (t: NewTreatment) => boolean,
+    apply: (t: NewTreatment) => void,
+  ) => {
+    const found = treatmentRows.find(holds);
+    if (found) {
+      guaranteed.add(found.id);
+      return;
+    }
+    const target = adultActs.find((t) => unused(t) && candidate(t));
+    if (!target) throw new Error("Seed: no acte to guarantee a case on");
+    apply(target);
+    guaranteed.add(target.id);
+  };
+  ensure(
+    (t) => t.status === "canceled",
+    (t) => t.status === "completed",
+    (t) => {
+      t.status = "canceled";
+      t.notes = "Annulé à la demande du patient.";
+    },
+  );
+  ensure(
+    (t) => t.status === "planned",
+    (t) => t.status === "completed" && !t.appointmentId,
+    (t) => {
+      t.status = "planned";
+      t.performedAt = null;
+    },
+  );
+  ensure(
+    (t) => (t.teeth as string[]).length === 0,
+    () => true,
+    (t) => {
+      t.teeth = [];
+    },
+  );
+  ensure(
+    (t) =>
+      !!t.appointmentId &&
+      appointmentRows.some(
+        (a) => a.id === t.appointmentId && a.status === "completed",
+      ),
+    (t) =>
+      t.status === "completed" && (completedByPatient.get(t.patientId) ?? []).length > 0,
+    (t) => {
+      const visit = completedByPatient.get(t.patientId)![0];
+      t.appointmentId = visit.id;
+      t.practitionerId = visit.practitionerId;
+      t.performedAt = visit.startsAt;
+      t.createdAt = visit.startsAt;
+    },
+  );
+  // Exactly two adjacent teeth, priced per tooth — «Dent 26, Dent 27».
+  ensure(
+    (t) => (t.teeth as string[]).length === 2,
+    (t) => t.status === "completed" && (t.teeth as string[]).length === 1,
+    (t) => {
+      t.teeth = ["26", "27"];
+      t.totalAmountCents *= 2;
+    },
+  );
 
   // A patient's file is opened before their first appointment or acte.
   for (const patient of patientRows) {
