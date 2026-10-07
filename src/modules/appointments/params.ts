@@ -32,7 +32,9 @@ export const filterSearchParams = {
   status: parseAsStringLiteral(APPOINTMENT_STATUS_VALUES).withOptions({
     clearOnDefault: true,
   }),
-  patientId: parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  patientId: parseAsString
+    .withDefault("")
+    .withOptions({ clearOnDefault: true }),
   /** The `/rendez-vous` list's page. The agenda ignores it. */
   page: parseAsInteger
     .withDefault(DEFAULT_PAGE)

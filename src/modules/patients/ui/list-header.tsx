@@ -32,17 +32,32 @@ const PatientsListHeader = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [searchInput, setSearchInput] = useState(filters.search);
 
-  useEffect(() => setSearchInput(filters.search), [filters.search]);
-  useEffect(() => {
-    if (searchInput === filters.search) return;
-    const id = window.setTimeout(() => narrow({ search: searchInput }), 300);
-    return () => window.clearTimeout(id);
-  }, [searchInput]);
-
   // A filter change re-keys the list query, which suspends. Inside a
   // transition React keeps the current table on screen instead of flashing
   // the loading state on every keystroke.
   const [isFiltering, startTransition] = useTransition();
+
+  // The URL's search changed from elsewhere (back button, «Effacer»): re-seed
+  // the input during render rather than in an effect.
+  const [syncedSearch, setSyncedSearch] = useState(filters.search);
+  if (syncedSearch !== filters.search) {
+    setSyncedSearch(filters.search);
+    setSearchInput(filters.search);
+  }
+
+  // Debounced: the URL — and the query key — follow the input 300 ms later,
+  // back on page 1.
+  useEffect(() => {
+    if (searchInput === filters.search) return;
+    const id = window.setTimeout(
+      () =>
+        startTransition(() => {
+          void setFilters({ search: searchInput, page: DEFAULT_PAGE });
+        }),
+      300,
+    );
+    return () => window.clearTimeout(id);
+  }, [searchInput, filters.search, setFilters]);
 
   // Options for the two filter selects. Both are prefetched by the route, so
   // this resolves from the dehydrated cache with no request; `useQuery` rather

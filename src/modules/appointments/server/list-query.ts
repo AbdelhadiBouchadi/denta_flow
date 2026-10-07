@@ -34,7 +34,9 @@ export const appointmentListWhere = (
       ? eq(appointments.practitionerId, filters.practitionerId)
       : undefined,
     filters.status ? eq(appointments.status, filters.status) : undefined,
-    filters.patientId ? eq(appointments.patientId, filters.patientId) : undefined,
+    filters.patientId
+      ? eq(appointments.patientId, filters.patientId)
+      : undefined,
   );
 
 /**

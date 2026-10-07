@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { clinicInstant } from "@/lib/time";
 import { CalendarView } from "../types";
 import {
   addCalendarDays,
@@ -154,6 +155,95 @@ describe("shiftAnchorDate", () => {
     );
     expect(shiftAnchorDate("2026-01-15", CalendarView.Month, -1)).toBe(
       "2025-12-01",
+    );
+  });
+});
+
+/** Calendar days in `[first, afterLast)`, counted zone-free. */
+const dayCount = (date: string, view: CalendarView) => {
+  const { first, afterLast } = getDaysForView(date, view);
+  let count = 0;
+  for (let day = first; day !== afterLast; day = addCalendarDays(day, 1)) {
+    count++;
+  }
+  return count;
+};
+
+describe("getRangeForView — grid sizes (branch 18)", () => {
+  it("draws a six-week month as 42 days", () => {
+    // August 2026 starts on a Saturday and ends on a Monday.
+    expect(getDaysForView("2026-08-20", CalendarView.Month)).toEqual({
+      first: "2026-07-27",
+      afterLast: "2026-09-07",
+    });
+    expect(dayCount("2026-08-20", CalendarView.Month)).toBe(42);
+  });
+
+  it("draws a five-week month as 35 days", () => {
+    // June 2026 starts on a Monday and ends on a Tuesday.
+    expect(dayCount("2026-06-10", CalendarView.Month)).toBe(35);
+  });
+
+  it("draws a February that fills exactly four weeks as 28 days", () => {
+    // February 2027 runs Monday the 1st → Sunday the 28th, and the month view
+    // draws exactly that: startOfWeek(1st) → endOfWeek(last day).
+    expect(dayCount("2027-02-14", CalendarView.Month)).toBe(28);
+  });
+
+  it("gives 7 days for a week, 1 for a day and 30 for the agenda", () => {
+    expect(dayCount("2026-03-12", CalendarView.Week)).toBe(7);
+    expect(dayCount("2026-03-12", CalendarView.Day)).toBe(1);
+    expect(dayCount("2026-03-12", CalendarView.Agenda)).toBe(30);
+  });
+
+  it.each(Object.values(CalendarView))(
+    "%s never spans more than 62 days across a whole year",
+    (view) => {
+      for (let day = "2026-01-01"; day < "2027-01-01";) {
+        const { from, to } = getRangeForView(day, view);
+        expect(to.getTime() - from.getTime()).toBeLessThanOrEqual(
+          62 * 24 * 60 * 60 * 1000,
+        );
+        day = addCalendarDays(day, 1);
+      }
+    },
+  );
+});
+
+describe("getRangeForView — year boundary", () => {
+  it("runs a week from December into January", () => {
+    // 31 December 2026 is a Thursday. The instants are compared through
+    // `clinicInstant`, not as literals: the IANA data Node ships (2026c)
+    // already has Casablanca at UTC+0 that winter, and the next release may
+    // not — which is exactly why no offset is ever written down.
+    expect(getDaysForView("2026-12-31", CalendarView.Week)).toEqual({
+      first: "2026-12-28",
+      afterLast: "2027-01-04",
+    });
+    expect(getRangeForView("2026-12-31", CalendarView.Week)).toEqual({
+      from: clinicInstant("2026-12-28"),
+      to: clinicInstant("2027-01-04"),
+    });
+  });
+
+  it("draws January's grid from the last days of December", () => {
+    // 1 January 2027 is a Friday; 31 January a Sunday.
+    expect(getDaysForView("2027-01-15", CalendarView.Month)).toEqual({
+      first: "2026-12-28",
+      afterLast: "2027-02-01",
+    });
+  });
+
+  it("runs the agenda's 30 days into the next year", () => {
+    expect(getDaysForView("2026-12-20", CalendarView.Agenda)).toEqual({
+      first: "2026-12-20",
+      afterLast: "2027-01-19",
+    });
+  });
+
+  it("moves to the previous month across the year", () => {
+    expect(shiftAnchorDate("2027-01-10", CalendarView.Month, -1)).toBe(
+      "2026-12-01",
     );
   });
 });

@@ -1,6 +1,6 @@
 import { AGENDA_DAY_END, AGENDA_DAY_START } from "@/constants";
 
-import type { CalendarView, EventColor } from "./types";
+import type { CalendarView } from "./types";
 
 export const EventHeight = 24;
 
@@ -26,10 +26,9 @@ const toGridHour = (value: string, round: "floor" | "ceil") => {
 export const StartHour = toGridHour(AGENDA_DAY_START, "floor");
 export const EndHour = toGridHour(AGENDA_DAY_END, "ceil");
 
-// Default slot when no time was picked (month-cell click, «Nouveau» button):
-// the first hour of the clinic day.
+// Default start when no time was picked (month-cell click): the first hour of
+// the clinic day.
 export const DefaultStartHour = StartHour;
-export const DefaultEndHour = StartHour + 1;
 
 // French copy for every visible string in this folder.
 export const VIEW_LABELS: Record<CalendarView, string> = {
@@ -57,12 +56,3 @@ export const CALENDAR_COPY = {
   agendaEmptyTitle: "Aucun rendez-vous",
   agendaEmptyDescription: "Aucun rendez-vous n’est prévu sur cette période.",
 } as const;
-
-export const EVENT_COLOR_LABELS: Record<EventColor, string> = {
-  sky: "Bleu ciel",
-  amber: "Ambre",
-  violet: "Violet",
-  rose: "Rose",
-  emerald: "Émeraude",
-  orange: "Orange",
-};

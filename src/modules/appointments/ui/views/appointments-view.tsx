@@ -51,7 +51,9 @@ const AppointmentsView = () => {
     }
   }, [clampedPage, filters.page, setFilters]);
 
-  const dayCounts = new Map(data.dayCounts.map(({ day, count }) => [day, count]));
+  const dayCounts = new Map(
+    data.dayCounts.map(({ day, count }) => [day, count]),
+  );
   // Grouped on the clinic's wall clock, the same day the procedure counted.
   const dayGroup = (appointment: AppointmentListItem) => {
     const day = toClinicDate(appointment.startsAt);

@@ -207,7 +207,10 @@ const AppointmentsListHeader = () => {
         )}
       </div>
 
-      <NewAppointmentDialog open={isDialogOpen} onOpenChange={setIsDialogOpen} />
+      <NewAppointmentDialog
+        open={isDialogOpen}
+        onOpenChange={setIsDialogOpen}
+      />
     </div>
   );
 };

@@ -99,6 +99,9 @@ export const BOOKING_WARNING_LABELS: Record<BookingWarning, string> = {
     "Ce créneau tombe pendant une absence du praticien ou une fermeture du cabinet.",
 };
 
+/** The dossier's «Rendez-vous» tab shows at most this many, newest first. */
+export const PATIENT_APPOINTMENTS_LIMIT = 100;
+
 // ── Duration ────────────────────────────────────────────────────────────────
 
 /** Bounds match the appointment types' own duration bounds. */
@@ -124,7 +127,8 @@ export const APPOINTMENT_VALIDATION_MESSAGES = {
 export const APPOINTMENT_SERVER_ERRORS = {
   notFound: "Rendez-vous introuvable.",
   /** The exclusion constraint won a race the application check could not see. */
-  slotJustTaken: "Ce créneau vient d'être réservé. Merci d'en choisir un autre.",
+  slotJustTaken:
+    "Ce créneau vient d'être réservé. Merci d'en choisir un autre.",
   missingReference:
     "Le patient, le praticien ou le type de rendez-vous sélectionné n’existe plus. Actualisez la page, puis réessayez.",
   typeNotFound: "Ce type de rendez-vous n’existe plus.",
@@ -146,6 +150,10 @@ export const illegalTransitionMessage = (
   to: AppointmentStatus,
 ) =>
   `Impossible de passer un rendez-vous « ${APPOINTMENT_STATUS_LABELS[from]} » à « ${APPOINTMENT_STATUS_LABELS[to]} ».`;
+
+/** «Ce rendez-vous est « Terminé » : seuls le motif et les notes …» */
+export const terminalEditMessage = (status: AppointmentStatus) =>
+  `Ce rendez-vous est « ${APPOINTMENT_STATUS_LABELS[status]} » : seuls le motif et les notes peuvent encore être modifiés.`;
 
 // ── UI copy ─────────────────────────────────────────────────────────────────
 

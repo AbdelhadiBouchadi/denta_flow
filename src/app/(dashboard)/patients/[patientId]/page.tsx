@@ -22,8 +22,8 @@ interface Props {
 
 /**
  * The dossier's tabs are nuqs state on this one route, so one session read and
- * one prefetch block cover all five (04-hydration.md §2). The tabs whose slices
- * do not exist yet have nothing to prefetch.
+ * one prefetch block cover all of them (04-hydration.md §2). The tabs whose
+ * slices do not exist yet have nothing to prefetch.
  */
 const PatientIdPage = async ({ params }: Props) => {
   const { patientId } = await params;
@@ -34,6 +34,11 @@ const PatientIdPage = async ({ params }: Props) => {
   const queryClient = getQueryClient();
   void queryClient.prefetchQuery(
     trpc.patients.getOne.queryOptions({ id: patientId }),
+  );
+  // The «Rendez-vous» tab: prefetched whatever tab is open, so switching to
+  // it never shows a spinner.
+  void queryClient.prefetchQuery(
+    trpc.appointments.getManyByPatient.queryOptions({ patientId }),
   );
   // Read by the edit dialog's form, which the header can open at any moment.
   void queryClient.prefetchQuery(trpc.tags.getMany.queryOptions());

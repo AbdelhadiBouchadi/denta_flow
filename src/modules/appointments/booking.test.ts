@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { clinicInstant } from "@/lib/time";
-import { findBookingWarnings, intervalsOverlap, type Interval } from "./booking";
+import {
+  findBookingWarnings,
+  intervalsOverlap,
+  type Interval,
+} from "./booking";
 import { BookingWarning } from "./types";
 
 /** A slot on the clinic's wall clock, resolved through the clinic timezone. */

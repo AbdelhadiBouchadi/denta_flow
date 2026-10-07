@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatCalendarDate,
   formatDate,
   formatDateTime,
   formatDH,
@@ -131,6 +132,11 @@ describe("date and time formatting", () => {
 
   it("accepts a Date as readily as an ISO string", () => {
     expect(formatDate(new Date(summerInstant))).toBe("15/06/2026");
+  });
+
+  it("reformats a calendar day as text, whatever the machine's timezone", () => {
+    expect(formatCalendarDate("2026-10-02")).toBe("02/10/2026");
+    expect(formatCalendarDate("2027-01-01")).toBe("01/01/2027");
   });
 });
 

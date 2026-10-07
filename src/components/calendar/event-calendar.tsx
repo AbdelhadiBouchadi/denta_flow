@@ -48,7 +48,6 @@ import {
   WeekCellsHeight,
 } from "./constants";
 import { DayView } from "./day-view";
-import { EventDialog } from "./event-dialog";
 import { capitalize, formatCalendarDate } from "./format";
 import { MonthView } from "./month-view";
 import type { CalendarEvent, CalendarView } from "./types";
@@ -87,7 +86,7 @@ export interface EventCalendarProps {
   onViewChange?: (view: CalendarView) => void;
   /** m/s/j/a switch views. Off by default: window-level listeners. */
   enableShortcuts?: boolean;
-  /** Replaces the built-in EventDialog. */
+  /** Renders the create/edit UI. Without it, clicks open nothing. */
   renderDialog?: (state: CalendarDialogState) => ReactNode;
 }
 
@@ -450,17 +449,7 @@ export function EventCalendar({
           )}
         </div>
 
-        {renderDialog ? (
-          renderDialog(dialogState)
-        ) : (
-          <EventDialog
-            event={selectedEvent}
-            isOpen={isEventDialogOpen}
-            onClose={closeDialog}
-            onDelete={handleEventDelete}
-            onSave={handleEventSave}
-          />
-        )}
+        {renderDialog?.(dialogState)}
       </CalendarDndProvider>
     </div>
   );

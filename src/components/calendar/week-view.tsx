@@ -2,7 +2,6 @@
 
 import {
   addHours,
-  areIntervalsOverlapping,
   differenceInMinutes,
   eachDayOfInterval,
   eachHourOfInterval,
@@ -28,7 +27,11 @@ import { EventItem } from "./event-item";
 import { formatCalendarDate, formatCalendarTime } from "./format";
 import type { CalendarEvent } from "./types";
 import { useCurrentTimeIndicator } from "./use-current-time-indicator";
-import { getVisibleHourRange, isMultiDayEvent } from "./utils";
+import {
+  assignOverlapLanes,
+  getVisibleHourRange,
+  isMultiDayEvent,
+} from "./utils";
 
 interface WeekViewProps {
   currentDate: Date;
@@ -134,80 +137,34 @@ export function WeekView({
         return bDuration - aDuration;
       });
 
-      // Calculate positions for each event
-      const positionedEvents: PositionedEvent[] = [];
+      // Clip to this day, then lay overlapping events side by side: each
+      // cluster of overlaps splits the column width evenly between its lanes.
       const dayStart = startOfDay(day);
+      const spans = sortedEvents.map((event) => ({
+        end: isSameDay(day, event.end)
+          ? new Date(event.end)
+          : addHours(dayStart, 24),
+        event,
+        start: isSameDay(day, event.start) ? new Date(event.start) : dayStart,
+      }));
+      const lanes = assignOverlapLanes(spans);
 
-      // Track columns for overlapping events
-      const columns: { event: CalendarEvent; end: Date }[][] = [];
+      const positionedEvents: PositionedEvent[] = spans.map(
+        ({ event, start, end }, index) => {
+          const startHour = getHours(start) + getMinutes(start) / 60;
+          const endHour = getHours(end) + getMinutes(end) / 60;
+          const { lane, lanes: laneCount } = lanes[index];
 
-      for (const event of sortedEvents) {
-        const eventStart = new Date(event.start);
-        const eventEnd = new Date(event.end);
-
-        // Adjust start and end times if they're outside this day
-        const adjustedStart = isSameDay(day, eventStart)
-          ? eventStart
-          : dayStart;
-        const adjustedEnd = isSameDay(day, eventEnd)
-          ? eventEnd
-          : addHours(dayStart, 24);
-
-        // Calculate top position and height
-        const startHour =
-          getHours(adjustedStart) + getMinutes(adjustedStart) / 60;
-        const endHour = getHours(adjustedEnd) + getMinutes(adjustedEnd) / 60;
-
-        // Adjust the top calculation to account for the new start time
-        const top = (startHour - gridStartHour) * WeekCellsHeight;
-        const height = (endHour - startHour) * WeekCellsHeight;
-
-        // Find a column for this event
-        let columnIndex = 0;
-        let placed = false;
-
-        while (!placed) {
-          const col = columns[columnIndex] || [];
-          if (col.length === 0) {
-            columns[columnIndex] = col;
-            placed = true;
-          } else {
-            const overlaps = col.some((c) =>
-              areIntervalsOverlapping(
-                { end: adjustedEnd, start: adjustedStart },
-                {
-                  end: new Date(c.event.end),
-                  start: new Date(c.event.start),
-                },
-              ),
-            );
-
-            if (!overlaps) {
-              placed = true;
-            } else {
-              columnIndex++;
-            }
-          }
-        }
-
-        // Ensure column is initialized before pushing
-        const currentColumn = columns[columnIndex] || [];
-        columns[columnIndex] = currentColumn;
-        currentColumn.push({ end: adjustedEnd, event });
-
-        // Calculate width and left position based on number of columns
-        const width = columnIndex === 0 ? 1 : 0.9;
-        const left = columnIndex === 0 ? 0 : columnIndex * 0.1;
-
-        positionedEvents.push({
-          event,
-          height,
-          left,
-          top,
-          width,
-          zIndex: 10 + columnIndex, // Higher columns get higher z-index
-        });
-      }
+          return {
+            event,
+            height: (endHour - startHour) * WeekCellsHeight,
+            left: lane / laneCount,
+            top: (startHour - gridStartHour) * WeekCellsHeight,
+            width: 1 / laneCount,
+            zIndex: 10 + lane,
+          };
+        },
+      );
 
       return positionedEvents;
     });
@@ -231,11 +188,9 @@ export function WeekView({
   return (
     <div className="flex h-full flex-col" data-slot="week-view">
       <div className="border-border/70 bg-background/80 sticky top-0 z-30 grid grid-cols-8 border-b backdrop-blur-md">
-        <div className="text-muted-foreground/70 py-2 text-center text-sm">
-          <span className="max-[479px]:sr-only">
-            {formatCalendarDate(new Date(), "O")}
-          </span>
-        </div>
+        {/* Gutter corner, empty: upstream printed the viewer's GMT offset. */}
+        <div />
+
         {days.map((day) => (
           <div
             className="text-muted-foreground/70 data-today:text-foreground py-2 text-center text-sm data-today:font-medium"

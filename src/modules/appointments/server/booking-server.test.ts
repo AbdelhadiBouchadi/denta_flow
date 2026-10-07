@@ -41,9 +41,9 @@ describe("23P01 → CONFLICT", () => {
   });
 
   it("is thrown, not returned, by the rethrow helper", () => {
-    expect(() => rethrowAppointmentWriteError(wrapped(pgError("23P01")))).toThrow(
-      APPOINTMENT_SERVER_ERRORS.slotJustTaken,
-    );
+    expect(() =>
+      rethrowAppointmentWriteError(wrapped(pgError("23P01"))),
+    ).toThrow(APPOINTMENT_SERVER_ERRORS.slotJustTaken);
   });
 });
 
