@@ -289,7 +289,10 @@ export const treatments = pgTable("treatments", {
   serviceId: text("service_id").references(() => services.id, { onDelete: "set null" }),
   practitionerId: text("practitioner_id").references(() => user.id, { onDelete: "set null" }),
   label: text("label").notNull(),
-  teeth: jsonb("teeth").$type<string[]>().notNull().default([]),   // FDI codes
+  // SNAPSHOT of services.nomenclatureCode at creation, like label and price:
+  // recoding a service never rewrites an existing acte. Printed on documents.
+  nomenclatureCode: text("nomenclature_code"),
+  teeth: jsonb("teeth").$type<string[]>().notNull().default([]),   // FDI codes (may be empty)
   totalAmountCents: integer("total_amount_cents").notNull().default(0),
   status: treatmentStatus("status").notNull().default("planned"),
   performedAt: timestamp("performed_at", { withTimezone: true }),

@@ -17,27 +17,24 @@ import PatientBreadcrumb from "../patient-breadcrumb";
 import PatientDossierHeader from "../patient-dossier-header";
 import PatientInformations from "../patient-informations";
 import PatientMedicalHistory from "../patient-medical-history";
+import PatientTreatments from "../patient-treatments";
 
 interface PatientIdViewProps {
   /** An identifier, not data — the only prop a view takes from a page. */
   patientId: string;
 }
 
-/** Copy for the three tabs whose slices do not exist yet. */
+/** Copy for the tabs whose slices do not exist yet. */
 const PENDING_TABS: Record<
   Exclude<
     PatientTab,
     | PatientTab.Informations
     | PatientTab.MedicalHistory
     | PatientTab.Appointments
+    | PatientTab.Treatments
   >,
   { title: string; description: string }
 > = {
-  [PatientTab.Treatments]: {
-    title: "Aucun acte",
-    description:
-      "Les actes réalisés et leur montant s’afficheront ici dès que le catalogue d’actes sera disponible.",
-  },
   [PatientTab.Payments]: {
     title: "Aucun paiement",
     description:
@@ -119,6 +116,12 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
             {/* Its own query, prefetched by the page with the others. */}
             <TabsContent value={PatientTab.Appointments}>
               <PatientAppointments patient={patient} />
+            </TabsContent>
+
+            {/* The balance strip reads this same getOne, so an acte saved
+                here refreshes it through the patients invalidation. */}
+            <TabsContent value={PatientTab.Treatments}>
+              <PatientTreatments patient={patient} />
             </TabsContent>
 
             {Object.entries(PENDING_TABS).map(

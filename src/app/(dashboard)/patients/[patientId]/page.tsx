@@ -40,6 +40,10 @@ const PatientIdPage = async ({ params }: Props) => {
   void queryClient.prefetchQuery(
     trpc.appointments.getManyByPatient.queryOptions({ patientId }),
   );
+  // The «Actes» tab, for the same reason.
+  void queryClient.prefetchQuery(
+    trpc.treatments.getManyByPatient.queryOptions({ patientId }),
+  );
   // Read by the edit dialog's form, which the header can open at any moment.
   void queryClient.prefetchQuery(trpc.tags.getMany.queryOptions());
   void queryClient.prefetchQuery(trpc.insurers.getMany.queryOptions());

@@ -22,7 +22,12 @@ import GeneratedAvatar from "@/components/shared/generated-avatar";
 import StatusBadge from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { formatDate, formatDateTime, formatPhone } from "@/lib/format";
+import {
+  describeBalance,
+  formatDate,
+  formatDateTime,
+  formatPhone,
+} from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { GENDER_LABELS, NO_INSURER_LABEL } from "../constants";
 import {
@@ -279,7 +284,8 @@ const PatientDossierHeader = ({ patient }: PatientDossierHeaderProps) => {
             <div className="flex flex-wrap items-center gap-3">
               <StatTile
                 icon={BanknoteIcon}
-                label="Reste à payer"
+                // «Avance» when the patient has paid ahead (describeBalance).
+                label={describeBalance(patient.remainingCents).label}
                 tone={PAYMENT_TILE_TONES[paymentStatus]}
                 value={
                   <PaymentAmount

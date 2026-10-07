@@ -32,6 +32,10 @@ import {
 } from "@/constants";
 import { db } from "@/database";
 import {
+  isBillableTreatment,
+  isPlannedTreatment,
+} from "@/database/sql/billable";
+import {
   appointments,
   insurers,
   medicalHistories,
@@ -65,21 +69,20 @@ import {
 // `WHERE "patient_id" = "id"`, which resolves inside the subquery and silently
 // returns zero for every row. The builder keeps its own WHERE fully qualified.
 
-/** Only completed and in-progress actes are billed (08-clinical.md §3). */
-const BILLED_TREATMENT_STATUSES: (typeof treatments.$inferSelect)["status"][] = [
-  "completed",
-  "in_progress",
-];
-
+/**
+ * Only billable actes are owed — the shared rule in src/database/sql/billable.ts
+ * (in progress or completed; never planned, never canceled).
+ */
 const totalAmountCents = sql<number>`COALESCE(${db
   .select({ value: sum(treatments.totalAmountCents) })
   .from(treatments)
-  .where(
-    and(
-      eq(treatments.patientId, patients.id),
-      inArray(treatments.status, BILLED_TREATMENT_STATUSES),
-    ),
-  )}, 0)::int`;
+  .where(and(eq(treatments.patientId, patients.id), isBillableTreatment))}, 0)::int`;
+
+/** «Prévu»: the treatment plan not started yet, shown apart and never owed. */
+const plannedAmountCents = sql<number>`COALESCE(${db
+  .select({ value: sum(treatments.totalAmountCents) })
+  .from(treatments)
+  .where(and(eq(treatments.patientId, patients.id), isPlannedTreatment))}, 0)::int`;
 
 const amountPaidCents = sql<number>`COALESCE(${db
   .select({ value: sum(payments.amountCents) })
@@ -339,6 +342,7 @@ export const patientsRouter = createTRPCRouter({
           totalAmountCents,
           amountPaidCents,
           remainingCents,
+          plannedAmountCents,
           // Audit, shown as «créé par» on the Informations tab. Joined, never
           // used as a filter (AGENTS.md §2).
           createdByStaff: { id: user.id, name: user.name },
