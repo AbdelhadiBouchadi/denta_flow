@@ -31,9 +31,14 @@ const DashboardShell = ({ children }: Props) => {
     >
       <AppSidebar variant="inset" />
 
-      <SidebarInset>
+      {/* `min-w-0` on every flex ancestor of the page content. The inset is
+          a flex item of the provider's row: without it, its automatic
+          minimum width is its content's min-content width, so a wide table
+          kept <main> from shrinking beside the expanded sidebar and pushed
+          the page — and the header's user menu — past the viewport. */}
+      <SidebarInset className="min-w-0">
         <SiteHeader />
-        <div className="flex flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 md:gap-6 md:p-6">
           {children}
         </div>
       </SidebarInset>

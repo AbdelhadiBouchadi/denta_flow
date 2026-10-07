@@ -88,7 +88,7 @@ export const TimeField = ({
           size="default"
           aria-invalid={ariaInvalid}
           aria-label={`${prefix}${TIME_FIELD_COPY.hour}`}
-          className="h-9 w-[4.5rem] tabular-nums"
+          className="h-9 w-18 tabular-nums"
         >
           <SelectValue placeholder={TIME_FIELD_COPY.hourPlaceholder} />
         </SelectTrigger>
@@ -119,7 +119,7 @@ export const TimeField = ({
           size="default"
           aria-invalid={ariaInvalid}
           aria-label={`${prefix}${TIME_FIELD_COPY.minute}`}
-          className="h-9 w-[4.5rem] tabular-nums"
+          className="h-9 w-18 tabular-nums"
         >
           <SelectValue placeholder={TIME_FIELD_COPY.minutePlaceholder} />
         </SelectTrigger>

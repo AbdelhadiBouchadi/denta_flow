@@ -1,23 +1,38 @@
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { formatPageRange } from "@/lib/format";
 
 type Props = {
   page: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  /**
+   * Both present ⇒ the footer reads «11–20 sur 87» instead of «Page 2 sur 9».
+   * Optional so a list that has not passed them yet keeps its old label.
+   */
+  total?: number;
+  pageSize?: number;
 };
 
 // Stateless: the URL is the state.
-const DataPagination = ({ page, totalPages, onPageChange }: Props) => {
+const DataPagination = ({
+  page,
+  totalPages,
+  onPageChange,
+  total,
+  pageSize,
+}: Props) => {
   return (
     <div className="flex items-center justify-between">
-      <div className="text-muted-foreground flex-1 text-sm">
-        Page {page} sur {totalPages || 1}
+      <div className="text-muted-foreground flex-1 text-sm tabular-nums">
+        {total !== undefined && pageSize !== undefined
+          ? formatPageRange(page, pageSize, total)
+          : `Page ${page} sur ${totalPages || 1}`}
       </div>
       <div className="flex items-center justify-end space-x-2 py-4">
         <Button
-          disabled={page === 1}
+          disabled={page <= 1}
           size="sm"
           variant="outline"
           onClick={() => onPageChange(Math.max(1, page - 1))}
@@ -26,7 +41,7 @@ const DataPagination = ({ page, totalPages, onPageChange }: Props) => {
           Précédent
         </Button>
         <Button
-          disabled={page === totalPages || totalPages === 0}
+          disabled={page >= totalPages || totalPages === 0}
           size="sm"
           variant="outline"
           onClick={() => onPageChange(Math.min(totalPages, page + 1))}
