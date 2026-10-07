@@ -14,6 +14,7 @@ import {
   or,
   sql,
   sum,
+  type SQL,
 } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
@@ -278,11 +279,74 @@ const rethrowWriteError = (error: unknown): never => {
   throw error;
 };
 
+// ── Patient-scoped serialization ────────────────────────────────────────────
+//
+// Two staff members encaissing the same patient at once both read «reste
+// 1 000 DH», both pay 1 000 DH unconfirmed, and the patient ends 1 000 DH in
+// credit that nobody confirmed. A lock on the PAYMENT row cannot prevent
+// that: the two writes touch different payments. The boundary is the
+// PATIENT.
+//
+// Neon HTTP has no interactive transaction, so read → check → write cannot
+// span round trips. Instead the guarded writes are one `db.batch` (one
+// transaction) whose FIRST statement locks the patient row `FOR UPDATE`.
+// Every guarded write for that patient queues on it. Under READ COMMITTED
+// each later statement takes a fresh snapshot AFTER the lock is granted, so
+// the write's own WHERE re-reads the balance — including a payment
+// committed by whoever held the lock before — and refuses to land if the
+// advance was not confirmed. The pre-check in JS is only the fast path that
+// answers `needs_confirmation` without taking a lock.
+
+/** Batch statement 1: the patient row, locked until the batch commits. */
+const lockPatient = (patientId: string) =>
+  db
+    .select({ id: patients.id })
+    .from(patients)
+    .where(eq(patients.id, patientId))
+    .for("update");
+
 /**
- * The activity row for an update or a remove, as INSERT … SELECT from the
- * payment itself, `FOR UPDATE`: it is written only if the payment is still at
- * the version the request read, and it locks that row so the write that
- * follows in the same batch cannot miss. Either both land, or neither.
+ * The write may land: the SQL mirror of `needsAdvanceConfirmation`
+ * (rules.ts, covered by Vitest) — confirmed, or not raising the amount, or
+ * leaving the balance ≥ 0. Evaluated inside the write statement, against the
+ * balance as of the lock (the patients slice's own SQL). `previous` is the
+ * stored amount on update — the column itself, read in the same statement —
+ * and 0 on create.
+ */
+const advanceAllowed = ({
+  confirmed,
+  amountCents,
+  previous,
+}: {
+  confirmed: boolean;
+  amountCents: number;
+  previous: SQL | number;
+}) =>
+  confirmed
+    ? sql`TRUE`
+    : sql`(${amountCents}::int <= ${previous} OR ${patientRemainingCents} + ${previous} - ${amountCents}::int >= 0)`;
+
+/** How many times a write refused by the guard re-reads and decides again. */
+const MAX_GUARDED_ATTEMPTS = 3;
+
+/** The write-free answer: nothing was written, ask the staff member. */
+const needsConfirmation = (check: {
+  remainingCents: number;
+  amountCents: number;
+  previousAmountCents?: number;
+}) => ({
+  status: "needs_confirmation" as const,
+  remainingCents: check.remainingCents,
+  excessCents: advanceExcessCents(check),
+  payment: null,
+});
+
+/**
+ * The activity row as INSERT … SELECT from the payment itself, `FOR UPDATE`:
+ * written only if the payment is at `version`. After a create or an update it
+ * follows the write and keys on the version that write stamped, so it lands
+ * exactly when the write did. Before a remove it locks the row, so the delete
+ * that follows cannot miss. Either both land, or neither.
  */
 const logFromPayment = (
   id: string,
@@ -478,60 +542,98 @@ export const paymentsRouter = createTRPCRouter({
    * Any staff member may encaisser. A payment that would put the patient in
    * credit is answered `needs_confirmation` and NOTHING is written until the
    * staff member resubmits with `confirmAdvance`.
+   *
+   * The balance check and the insert share the patient lock (see «Patient-
+   * scoped serialization»): the insert is INSERT … SELECT FROM patients WHERE
+   * `advanceAllowed`, so a concurrent payment cannot slip an unconfirmed
+   * advance past it. A refused insert writes nothing — nor its log row — and
+   * the balance is re-read and decided again.
    */
   create: protectedProcedure
     .input(paymentCreateSchema)
     .mutation(async ({ input, ctx }) => {
       const patient = await assertReferences(input);
+      const values = writableValues(input);
+      const summary = PAYMENT_ACTIVITY.created(
+        formatPatientName(patient),
+        formatDH(input.amountCents),
+      );
+      let remainingCents = patient.remainingCents;
 
-      const confirmation = {
-        remainingCents: patient.remainingCents,
-        amountCents: input.amountCents,
-      };
-      if (needsAdvanceConfirmation(confirmation) && !input.confirmAdvance) {
-        return {
-          status: "needs_confirmation" as const,
-          remainingCents: patient.remainingCents,
-          excessCents: advanceExcessCents(confirmation),
-          payment: null,
-        };
+      for (let attempt = 1; attempt <= MAX_GUARDED_ATTEMPTS; attempt++) {
+        const check = { remainingCents, amountCents: input.amountCents };
+        // Fast path: no lock taken, nothing written.
+        if (!input.confirmAdvance && needsAdvanceConfirmation(check)) {
+          return needsConfirmation(check);
+        }
+
+        // Stamped here, at the millisecond precision the version token
+        // travels in. Sent as ISO strings: a bare Date parameter would be
+        // serialised in the server's local zone and `::timestamp` would keep
+        // that wall clock.
+        const stamp = new Date();
+        const at = stamp.toISOString();
+        const id = nanoid();
+
+        try {
+          const [, [created]] = await db.batch([
+            lockPatient(input.patientId),
+            // The columns in table order, as INSERT … SELECT requires.
+            db
+              .insert(payments)
+              .select(
+                db
+                  .select({
+                    id: sql<string>`${id}::text`.as("id"),
+                    patientId: patients.id,
+                    treatmentId: sql<string | null>`${values.treatmentId}::text`.as("treatment_id"),
+                    insurerId: sql<string | null>`${values.insurerId}::text`.as("insurer_id"),
+                    amountCents: sql<number>`${values.amountCents}::int`.as("amount_cents"),
+                    method: sql<string>`${values.method}::payment_method`.as("method"),
+                    paidAt: sql<Date>`${values.paidAt.toISOString()}::timestamptz`.as("paid_at"),
+                    reference: sql<string | null>`${values.reference}::text`.as("reference"),
+                    notes: sql<string | null>`${values.notes}::text`.as("notes"),
+                    // Audit only, from the session — never read as a filter
+                    // (AGENTS.md §2).
+                    createdByStaffId: sql<string>`${ctx.auth.user.id}::text`.as("created_by_staff_id"),
+                    createdAt: sql<Date>`${at}::timestamp`.as("created_at"),
+                    updatedAt: sql<Date>`${at}::timestamp`.as("updated_at"),
+                  })
+                  .from(patients)
+                  .where(
+                    and(
+                      eq(patients.id, input.patientId),
+                      advanceAllowed({
+                        confirmed: input.confirmAdvance,
+                        amountCents: input.amountCents,
+                        previous: 0,
+                      }),
+                    ),
+                  ),
+              )
+              .returning(),
+            logFromPayment(id, stamp, {
+              action: "created",
+              summary,
+              staffId: ctx.auth.user.id,
+            }),
+          ]);
+
+          if (created) return { status: "saved" as const, payment: created };
+        } catch (error) {
+          return rethrowWriteError(error);
+        }
+
+        // Refused by the guard: a payment committed meanwhile moved the
+        // balance. Re-read it, decide again.
+        const fresh = await readPatientBalance(input.patientId);
+        if (!fresh) {
+          throw new TRPCError({ code: "NOT_FOUND", message: E.patientNotFound });
+        }
+        remainingCents = fresh.remainingCents;
       }
 
-      // Stamped here, at the millisecond precision the version token travels
-      // in, not left to `defaultNow()`.
-      const now = new Date();
-      const id = nanoid();
-      try {
-        const [[created]] = await db.batch([
-          db
-            .insert(payments)
-            .values({
-              ...writableValues(input),
-              id,
-              patientId: input.patientId,
-              createdAt: now,
-              updatedAt: now,
-              // Audit only, from the session — never read as a filter
-              // (AGENTS.md §2).
-              createdByStaffId: ctx.auth.user.id,
-            })
-            .returning(),
-          db.insert(activityLog).values({
-            entityType: ENTITY_TYPE,
-            entityId: id,
-            action: "created",
-            summary: PAYMENT_ACTIVITY.created(
-              formatPatientName(patient),
-              formatDH(input.amountCents),
-            ),
-            staffId: ctx.auth.user.id,
-          }),
-        ]);
-
-        return { status: "saved" as const, payment: created };
-      } catch (error) {
-        return rethrowWriteError(error);
-      }
+      return needsConfirmation({ remainingCents, amountCents: input.amountCents });
     }),
 
   /**
@@ -539,6 +641,11 @@ export const paymentsRouter = createTRPCRouter({
    * immutable. The write is conditional on `expectedUpdatedAt`, the version
    * the editor loaded; the advance check counts this payment's stored amount
    * out of the balance before counting the new one in.
+   *
+   * Same patient boundary as `create`: the UPDATE carries the version guard
+   * AND `advanceAllowed`, after the patient lock. Zero rows means one of
+   * three things, told apart by re-reading: deleted (NOT_FOUND), saved by
+   * someone else (CONFLICT), or refused by the guard (re-decide).
    */
   update: protectedProcedure
     .input(paymentUpdateSchema)
@@ -563,50 +670,80 @@ export const paymentsRouter = createTRPCRouter({
       }
 
       const patient = await assertReferences(input, existing);
+      const values = writableValues(input);
+      const summary = PAYMENT_ACTIVITY.updated(
+        formatPatientName(existing.patient),
+        formatDH(existing.amountCents),
+        formatDH(input.amountCents),
+      );
+      let remainingCents = patient.remainingCents;
 
-      const confirmation = {
-        remainingCents: patient.remainingCents,
+      for (let attempt = 1; attempt <= MAX_GUARDED_ATTEMPTS; attempt++) {
+        const check = {
+          remainingCents,
+          amountCents: input.amountCents,
+          previousAmountCents: existing.amountCents,
+        };
+        // Fast path: no lock taken, nothing written.
+        if (!input.confirmAdvance && needsAdvanceConfirmation(check)) {
+          return needsConfirmation(check);
+        }
+
+        const stamp = new Date();
+        try {
+          const [, [updated]] = await db.batch([
+            lockPatient(input.patientId),
+            db
+              .update(payments)
+              .set({ ...values, updatedAt: stamp })
+              .from(patients)
+              .where(
+                and(
+                  eq(payments.id, input.id),
+                  versionMatches(input.expectedUpdatedAt),
+                  eq(patients.id, payments.patientId),
+                  advanceAllowed({
+                    confirmed: input.confirmAdvance,
+                    amountCents: input.amountCents,
+                    previous: sql`${payments.amountCents}`,
+                  }),
+                ),
+              )
+              .returning(getTableColumns(payments)),
+            // Keyed on the version the update just stamped: logged exactly
+            // when the update landed.
+            logFromPayment(input.id, stamp, {
+              action: "updated",
+              summary,
+              staffId: ctx.auth.user.id,
+            }),
+          ]);
+
+          if (updated) return { status: "saved" as const, payment: updated };
+        } catch (error) {
+          return rethrowWriteError(error);
+        }
+
+        // Nothing matched: deleted, saved by someone else, or the guard.
+        const [current] = await db
+          .select({ updatedAt: payments.updatedAt })
+          .from(payments)
+          .where(eq(payments.id, input.id))
+          .limit(1);
+        if (!current) throw notFound();
+        if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
+          throw conflict();
+        }
+        const fresh = await readPatientBalance(input.patientId);
+        if (!fresh) throw notFound();
+        remainingCents = fresh.remainingCents;
+      }
+
+      return needsConfirmation({
+        remainingCents,
         amountCents: input.amountCents,
         previousAmountCents: existing.amountCents,
-      };
-      if (needsAdvanceConfirmation(confirmation) && !input.confirmAdvance) {
-        return {
-          status: "needs_confirmation" as const,
-          remainingCents: patient.remainingCents,
-          excessCents: advanceExcessCents(confirmation),
-          payment: null,
-        };
-      }
-
-      try {
-        const [, [updated]] = await db.batch([
-          logFromPayment(input.id, input.expectedUpdatedAt, {
-            action: "updated",
-            summary: PAYMENT_ACTIVITY.updated(
-              formatPatientName(existing.patient),
-              formatDH(existing.amountCents),
-              formatDH(input.amountCents),
-            ),
-            staffId: ctx.auth.user.id,
-          }),
-          db
-            .update(payments)
-            .set({ ...writableValues(input), updatedAt: new Date() })
-            .where(
-              and(
-                eq(payments.id, input.id),
-                versionMatches(input.expectedUpdatedAt),
-              ),
-            )
-            .returning(),
-        ]);
-
-        if (updated) return { status: "saved" as const, payment: updated };
-      } catch (error) {
-        return rethrowWriteError(error);
-      }
-
-      return notFoundOrConflict(input.id);
+      });
     }),
 
   // DESTRUCTIVE ⇒ admin, and the rejection comes from here, never from a
