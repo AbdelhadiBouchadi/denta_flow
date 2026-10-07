@@ -71,8 +71,20 @@ export const appointmentFormSchema = z.object({
   confirmOutOfHours: z.boolean().default(false),
 });
 
-/** Update = form + id. The fields are never redeclared (05-slice.md §1). */
-export const appointmentUpdateSchema = appointmentFormSchema.extend({ id });
+/**
+ * Update = form + id + version token. The fields are never redeclared
+ * (05-slice.md §1).
+ *
+ * `expectedUpdatedAt` is the `updatedAt` the editor LOADED. The write only
+ * lands while the row still carries it; anything saved in between — another
+ * tab, a drag on the agenda, a status change — makes it a CONFLICT instead of
+ * a silent overwrite. Not part of the form's own schema: the user never
+ * types it, the form adds it from `initialValues`.
+ */
+export const appointmentUpdateSchema = appointmentFormSchema.extend({
+  id,
+  expectedUpdatedAt: z.date(),
+});
 
 export const appointmentIdSchema = z.object({ id });
 

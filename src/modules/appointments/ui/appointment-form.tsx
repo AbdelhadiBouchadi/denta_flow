@@ -1,7 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
 import { CalendarIcon, TriangleAlertIcon } from "lucide-react";
@@ -129,6 +129,7 @@ export const AppointmentForm = ({
   onCancel,
 }: AppointmentFormProps) => {
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const invalidateAll = useInvalidateAppointments();
   const isEdit = !!initialValues;
 
@@ -137,6 +138,13 @@ export const AppointmentForm = ({
   const [patientSearch, setPatientSearch] = useState("");
   const [pickedPatient, setPickedPatient] = useState<PatientOption | null>(
     initialValues?.patient ?? null,
+  );
+  // The version token of the row being edited: the `updatedAt` the editor
+  // loaded. It moves only when the editor is reloaded onto a newer version
+  // after a CONFLICT, never on its own — a refetch of the list in the
+  // background must not silently re-arm an overwrite.
+  const [version, setVersion] = useState<Date | undefined>(
+    initialValues?.updatedAt,
   );
   // The out-of-hours warnings the server answered for one exact slot.
   const [pendingWarnings, setPendingWarnings] = useState<{
@@ -210,6 +218,7 @@ export const AppointmentForm = ({
     onSuccess?.();
   };
 
+  /** Create's errors: a CONFLICT there can only be the slot. */
   const handleWriteError = async (error: {
     data?: { code?: string } | null;
   }) => {
@@ -220,6 +229,41 @@ export const AppointmentForm = ({
       await invalidateAll();
     }
     toast.error(getErrorMessage(error));
+  };
+
+  /**
+   * An update CONFLICT has two causes: the slot was taken (overlap), or the
+   * appointment itself was saved by someone else since this editor loaded it
+   * (stale version). The code is the same, and the message is never parsed
+   * (06-ui.md §6 rule 4) — so the cause is read from DATA: the fresh row's
+   * `updatedAt` against the token this request carried.
+   *
+   * Either way the dialog stays open, and `getOne` + the lists are refreshed.
+   */
+  const handleUpdateError = async (
+    error: { data?: { code?: string } | null },
+    variables: { id: string; expectedUpdatedAt: Date },
+  ) => {
+    toast.error(getErrorMessage(error));
+    if (error.data?.code !== "CONFLICT") return;
+
+    await invalidateAll();
+    const fresh = await queryClient
+      .fetchQuery(trpc.appointments.getOne.queryOptions({ id: variables.id }))
+      .catch(() => null);
+    if (!fresh) return;
+
+    if (fresh.updatedAt.getTime() !== variables.expectedUpdatedAt.getTime()) {
+      // Stale: reload the editor onto the saved version — «Rechargez-le
+      // avant de réessayer». The next submit carries the new token, and is a
+      // decision made while looking at what the other person saved.
+      setVersion(fresh.updatedAt);
+      setPendingWarnings(null);
+      form.reset(toFormValues(fresh));
+      return;
+    }
+    // Same version ⇒ the row did not change: the slot is what conflicted.
+    form.setError("time", { message: getErrorMessage(error) });
   };
 
   const createAppointment = useMutation(
@@ -235,7 +279,7 @@ export const AppointmentForm = ({
       // The same invalidation as create — one block, both branches.
       onSuccess: (result, variables) =>
         handleWriteSuccess(result, variables, APPOINTMENT_COPY.updated),
-      onError: handleWriteError,
+      onError: (error, variables) => handleUpdateError(error, variables),
     }),
   );
 
@@ -248,7 +292,11 @@ export const AppointmentForm = ({
       confirmOutOfHours: pendingWarnings?.key === slotKey(values),
     };
     if (isEdit) {
-      updateAppointment.mutate({ ...payload, id: initialValues.id });
+      updateAppointment.mutate({
+        ...payload,
+        id: initialValues.id,
+        expectedUpdatedAt: version ?? initialValues.updatedAt,
+      });
       return;
     }
     createAppointment.mutate(payload);

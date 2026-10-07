@@ -129,8 +129,12 @@ export const APPOINTMENT_SERVER_ERRORS = {
     "Le patient, le praticien ou le type de rendez-vous sélectionné n’existe plus. Actualisez la page, puis réessayez.",
   typeNotFound: "Ce type de rendez-vous n’existe plus.",
   practitionerNotFound: "Ce praticien n’existe plus ou n’est plus actif.",
+  /** Optimistic concurrency: the version token no longer matches. */
+  appointmentChangedMeanwhile:
+    "Ce rendez-vous a été modifié entre-temps. Rechargez-le avant de réessayer.",
+  /** Same family, for a status someone else moved first. */
   statusChangedMeanwhile:
-    "Le statut de ce rendez-vous vient d’être modifié. Actualisez la page, puis réessayez.",
+    "Le statut de ce rendez-vous a été modifié entre-temps. Rechargez-le avant de réessayer.",
 } as const;
 
 /** «Ce praticien a déjà un rendez-vous de 10 h 00 à 10 h 30.» */

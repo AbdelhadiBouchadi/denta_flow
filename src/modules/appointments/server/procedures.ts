@@ -37,7 +37,6 @@ import { findBookingWarnings, type Interval } from "../booking";
 import {
   APPOINTMENT_DEFAULT_DURATION,
   APPOINTMENT_SERVER_ERRORS,
-  illegalTransitionMessage,
   overlapMessage,
 } from "../constants";
 import {
@@ -55,7 +54,13 @@ import {
   type AppointmentValues,
 } from "../schemas";
 import { pageWindow, totalPagesFor } from "../pagination";
-import { canTransition } from "../status";
+import type { AppointmentStatus } from "../types";
+import {
+  changeStatus,
+  guardedWrite,
+  versionMatches,
+  type AppointmentStatusStore,
+} from "./concurrency";
 import { rethrowAppointmentWriteError } from "./errors";
 import {
   APPOINTMENT_LIST_ORDER,
@@ -228,6 +233,40 @@ const bookingWarnings = async (practitionerId: string, slot: Interval) => {
   return findBookingWarnings(slot, ranges, closures);
 };
 
+// ── Concurrency ─────────────────────────────────────────────────────────────
+
+/** The re-select a guarded write runs when its WHERE matched nothing. */
+const appointmentExists = async (id: string) => {
+  const [row] = await db
+    .select({ id: appointments.id })
+    .from(appointments)
+    .where(eq(appointments.id, id))
+    .limit(1);
+  return row !== undefined;
+};
+
+/** `changeStatus`'s storage, in drizzle. Each method is one statement. */
+const statusStore: AppointmentStatusStore<typeof appointments.$inferSelect> = {
+  readStatus: async (id) => {
+    const [row] = await db
+      .select({ status: appointments.status })
+      .from(appointments)
+      .where(eq(appointments.id, id))
+      .limit(1);
+    // The pgEnum values and the TS enum are kept in lockstep (types.ts).
+    return (row?.status as AppointmentStatus | undefined) ?? null;
+  },
+  writeStatusIf: async (id, from, to) => {
+    const [updated] = await db
+      .update(appointments)
+      .set({ status: to, updatedAt: new Date() })
+      .where(and(eq(appointments.id, id), eq(appointments.status, from)))
+      .returning();
+    return updated;
+  },
+  exists: appointmentExists,
+};
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 export const appointmentsRouter = createTRPCRouter({
@@ -340,9 +379,15 @@ export const appointmentsRouter = createTRPCRouter({
       }
 
       try {
+        // Stamped here, not left to `defaultNow()`: every write to
+        // appointments sets `updatedAt` from the app, at the millisecond
+        // precision the version token travels in.
+        const now = new Date();
         const [created] = await db
           .insert(appointments)
           .values({
+            createdAt: now,
+            updatedAt: now,
             patientId: input.patientId,
             practitionerId: input.practitionerId,
             typeId: input.typeId,
@@ -368,6 +413,11 @@ export const appointmentsRouter = createTRPCRouter({
    * Moves or edits a booking. The same rules as `create`, excluding the row
    * itself from the overlap check. The status is untouched — see
    * `updateStatus`.
+   *
+   * Optimistic concurrency: the write is conditional on `expectedUpdatedAt`,
+   * the version the editor loaded. The read below only feeds the booking
+   * rules (slot changed? canceled?); it is never the concurrency guard, since
+   * it happens in this request, long after the user opened the form.
    */
   update: protectedProcedure
     .input(appointmentUpdateSchema)
@@ -407,22 +457,33 @@ export const appointmentsRouter = createTRPCRouter({
       }
 
       try {
-        const [updated] = await db
-          .update(appointments)
-          .set({
-            patientId: input.patientId,
-            practitionerId: input.practitionerId,
-            typeId: input.typeId,
-            startsAt: slot.startsAt,
-            endsAt: slot.endsAt,
-            reason: input.reason,
-            notes: input.notes,
-            updatedAt: new Date(),
-          })
-          .where(eq(appointments.id, input.id))
-          .returning();
+        const updated = await guardedWrite({
+          write: async () => {
+            const [row] = await db
+              .update(appointments)
+              .set({
+                patientId: input.patientId,
+                practitionerId: input.practitionerId,
+                typeId: input.typeId,
+                startsAt: slot.startsAt,
+                endsAt: slot.endsAt,
+                reason: input.reason,
+                notes: input.notes,
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(appointments.id, input.id),
+                  versionMatches(input.expectedUpdatedAt),
+                ),
+              )
+              .returning();
+            return row;
+          },
+          exists: () => appointmentExists(input.id),
+          conflictMessage: APPOINTMENT_SERVER_ERRORS.appointmentChangedMeanwhile,
+        });
 
-        if (!updated) throw notFound();
         return { requiresConfirmation: false as const, warnings, appointment: updated };
       } catch (error) {
         if (error instanceof TRPCError) throw error;
@@ -431,49 +492,16 @@ export const appointmentsRouter = createTRPCRouter({
     }),
 
   /**
-   * The status machine of `status.ts`, enforced here — never in the UI. The
-   * write is conditional on the status that was checked, so two people
-   * clicking at once cannot both move the same appointment.
+   * The status machine of `status.ts`, enforced here — never in the UI —
+   * through `changeStatus`: the write is conditional on the status that was
+   * checked, so two people clicking at once cannot both move the same
+   * appointment.
    */
   updateStatus: protectedProcedure
     .input(appointmentStatusUpdateSchema)
     .mutation(async ({ input }) => {
-      const [existing] = await db
-        .select({ status: appointments.status })
-        .from(appointments)
-        .where(eq(appointments.id, input.id))
-        .limit(1);
-
-      if (!existing) throw notFound();
-
-      // The pgEnum values and the TS enum are kept in lockstep (types.ts).
-      const from = existing.status as typeof input.status;
-      if (!canTransition(from, input.status)) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: illegalTransitionMessage(from, input.status),
-        });
-      }
-
       try {
-        const [updated] = await db
-          .update(appointments)
-          .set({ status: input.status, updatedAt: new Date() })
-          .where(
-            and(
-              eq(appointments.id, input.id),
-              eq(appointments.status, existing.status),
-            ),
-          )
-          .returning();
-
-        if (!updated) {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: APPOINTMENT_SERVER_ERRORS.statusChangedMeanwhile,
-          });
-        }
-        return updated;
+        return await changeStatus(statusStore, input.id, input.status);
       } catch (error) {
         if (error instanceof TRPCError) throw error;
         return rethrowAppointmentWriteError(error);
