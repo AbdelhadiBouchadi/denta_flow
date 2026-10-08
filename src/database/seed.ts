@@ -954,6 +954,8 @@ async function main() {
   // appointments can never overlap. Denser around today so the day and week views are full.
   const appointmentRows: NewAppointment[] = [];
   for (let offset = -91; offset <= 91; offset++) {
+    // Today is planned below, slot by slot, relative to the seeding instant.
+    if (offset === 0) continue;
     const day = clinicDay(offset);
     const sessions = SESSIONS[isoWeekday(day)];
     if (!sessions) continue;
@@ -1022,6 +1024,60 @@ async function main() {
       ] as const);
     }
   }
+  // Today — the dashboard's day (prompts/22). Placed relative to the seeding
+  // instant, on a 15-minute grid, so it reads as a clinic in mid-day whatever
+  // the hour: settled appointments END before now, one patient is in the
+  // waiting room, the rest is booked later today, one is canceled. Each
+  // practitioner keeps their own lane, so nothing overlaps (the exclusion
+  // constraint). Bookings are allowed outside hours (08-clinical.md §4 rule
+  // 7), so this holds on a Sunday or a closure too. A slot that would start
+  // outside today — a run close to midnight — is skipped, never moved to
+  // another day.
+  const SLOT_MS = 15 * 60_000;
+  const pivot = new Date(Math.floor(now.getTime() / SLOT_MS) * SLOT_MS); // ≤ now
+  const todayStart = at(today, "00:00");
+  const tomorrowStart = at(clinicDay(1), "00:00");
+  const TODAY_PLAN: [
+    lane: 0 | 1,
+    startMinutes: number,
+    durationMinutes: number,
+    status: NonNullable<NewAppointment["status"]>,
+  ][] = [
+    [0, -150, 30, "completed"],
+    [0, -75, 30, "completed"],
+    [0, -30, 30, "no_show"],
+    [0, 0, 30, "arrived"],
+    [0, 45, 30, "confirmed"],
+    [0, 90, 45, "planned"],
+    [1, -120, 45, "completed"],
+    [1, -60, 45, "completed"],
+    [1, 15, 30, "canceled"],
+    [1, 60, 30, "confirmed"],
+    [1, 105, 45, "planned"],
+  ];
+  const todayPatients = shuffle(
+    activePatients.filter((p) => !childIds.has(p.id)),
+  );
+  TODAY_PLAN.forEach(([lane, startMinutes, duration, status], index) => {
+    const startsAt = new Date(pivot.getTime() + startMinutes * 60_000);
+    if (startsAt < todayStart || startsAt >= tomorrowStart) return;
+    const type =
+      typeRows.find((t) => t.def.duration === duration) ?? typeRows[0];
+    appointmentRows.push({
+      id: nanoid(),
+      patientId: todayPatients[index % todayPatients.length].id,
+      practitionerId: dentistIds[lane],
+      typeId: type.id,
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + duration * 60_000),
+      reason: pick(type.def.reasons),
+      notes: null,
+      status,
+      createdByStaffId: pick([STAFF.secretary.id, STAFF.assistant.id]),
+      createdAt: at(clinicDay(-int(1, 20)), "10:00"),
+    });
+  });
+
   // Guarantee every status is represented whatever the hour the seed runs at.
   const upcoming = appointmentRows.filter(
     (a) => a.startsAt > now && a.status !== "canceled",
@@ -1342,6 +1398,23 @@ async function main() {
       });
     }
   });
+
+  // Today's takings (prompts/22): at least three payments dated today, before
+  // now, one of them an insurance reimbursement. Only `paidAt` moves — no
+  // amount — so every balance, the two «Avance» patients included, stays
+  // exactly as built above.
+  const paidToday = (p: NewPayment) =>
+    (p.paidAt as Date) >= todayStart && (p.paidAt as Date) <= now;
+  const todayPaidAt = (step: number) =>
+    new Date(Math.max(todayStart.getTime(), now.getTime() - (step + 1) * 37 * 60_000));
+  const moveToToday = (holds: (p: NewPayment) => boolean, step: number) => {
+    if (paymentRows.some((p) => paidToday(p) && holds(p))) return;
+    const target = [...paymentRows].reverse().find((p) => !paidToday(p) && holds(p));
+    if (target) target.paidAt = todayPaidAt(step);
+  };
+  moveToToday((p) => p.method === "insurance", 0);
+  moveToToday((p) => p.method === "cash", 1);
+  moveToToday((p) => p.method === "card" || p.method === "check", 2);
 
   // Expenses — the last three months, spread across every category.
   const expenseRows: (typeof expenses.$inferInsert)[] = [];
@@ -1738,6 +1811,26 @@ async function main() {
     throw new Error("Seed: paiements incohérents avec les règles de la branche 20");
   }
 
+  // The dashboard's day (prompts/22), whatever the dice and the hour gave.
+  const todayAppointments = appointmentRows.filter(
+    (a) => a.startsAt >= todayStart && a.startsAt < tomorrowStart,
+  );
+  const todayPractitioners = new Set(
+    todayAppointments.map((a) => a.practitionerId),
+  );
+  const positiveBalances = [...billed]
+    .map(([id, amount]) => amount - (paid.get(id) ?? 0))
+    .filter((remaining) => remaining > 0);
+  const todayPayments = paymentRows.filter(paidToday);
+  if (
+    todayAppointments.length < 6 ||
+    todayPractitioners.size < 2 ||
+    !todayPayments.some((p) => p.method === "insurance") ||
+    new Set(positiveBalances).size < 5
+  ) {
+    throw new Error("Seed: la journée du tableau de bord est incomplète");
+  }
+
   // ── Documents (prompts/21) ────────────────────────────────────────────────
   // Generated through the documents slice's OWN snapshot builder, numbering
   // and file-name rules, so a seeded facture is a real one. Every table is
@@ -1929,7 +2022,9 @@ async function main() {
     db.insert(expenses).values(expenseRows),
     db.insert(tasks).values(taskRows),
   ];
-  await db.batch(queries);
+  // SEED_DRY_RUN=1 builds and checks everything, writes nothing.
+  const isDryRun = process.env.SEED_DRY_RUN === "1";
+  if (!isDryRun) await db.batch(queries);
 
   // Counts and ids only — never a patient name (08-clinical.md §6).
   const statusCounts = appointmentRows.reduce<Record<string, number>>(
@@ -1940,7 +2035,7 @@ async function main() {
     {},
   );
 
-  console.log("Seed terminé :");
+  console.log(isDryRun ? "Seed (essai, rien n’est écrit) :" : "Seed terminé :");
   console.table({
     staff: staffRows.length,
     insurers: insurerRows.length,
@@ -1963,6 +2058,18 @@ async function main() {
   });
   console.log("Statuts des rendez-vous :", statusCounts);
   console.log("Patients en avance (ids) :", overpaid);
+  // The dashboard's day — counts only.
+  console.log("Tableau de bord, aujourd’hui :", {
+    rendezVous: todayAppointments.reduce<Record<string, number>>((acc, a) => {
+      acc[a.status!] = (acc[a.status!] ?? 0) + 1;
+      return acc;
+    }, {}),
+    praticiens: todayPractitioners.size,
+    paiements: todayPayments.length,
+    paiementsAssurance: todayPayments.filter((p) => p.method === "insurance")
+      .length,
+    soldesPositifsDistincts: new Set(positiveBalances).size,
+  });
   // Numbers and ids only — never a patient name.
   console.log(
     "Documents (numéro → patient id) :",

@@ -26,5 +26,10 @@ export const useInvalidatePatients = () => {
   return useCallback(async () => {
     await queryClient.invalidateQueries(trpc.patients.getMany.queryFilter());
     await queryClient.invalidateQueries(trpc.patients.getOne.queryFilter());
+    // The dashboard prints patient names (agenda, «Soldes à recouvrer»), and
+    // the admin's remove takes the patient's actes, payments and appointments
+    // with it — every figure there can move. Archiving moves none (an
+    // archived patient's debt still counts), but the hook is shared.
+    await queryClient.invalidateQueries(trpc.dashboard.pathFilter());
   }, [queryClient, trpc]);
 };

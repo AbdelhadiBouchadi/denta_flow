@@ -178,3 +178,42 @@ export const previousCalendarDate = (date: string): string => {
   const probe = new Date(Date.UTC(year, monthIndex, day - 1));
   return `${probe.getUTCFullYear()}-${pad2(probe.getUTCMonth() + 1)}-${pad2(probe.getUTCDate())}`;
 };
+
+/** The calendar day `days` after (or before, when negative) `date`. Zone-free. */
+export const addCalendarDays = (date: string, days: number): string => {
+  const { year, monthIndex, day } = parseCalendarDate(date);
+  const probe = new Date(Date.UTC(year, monthIndex, day + days));
+  return `${probe.getUTCFullYear()}-${pad2(probe.getUTCMonth() + 1)}-${pad2(probe.getUTCDate())}`;
+};
+
+// ── Instant ranges ──────────────────────────────────────────────────────────
+
+/**
+ * A half-open range of instants, `[start, end)`. Passed to SQL as two
+ * parameters — the database runs in UTC, so any day boundary computed in
+ * SQL (the current date, a cast or truncation of now to a day) would draw the
+ * day on the wrong clock for part of every day. The clinic's day is always drawn here, in TypeScript.
+ */
+export interface InstantRange {
+  start: Date;
+  end: Date;
+}
+
+/**
+ * The clinic calendar days `from` … `to`, both included, as instants:
+ * clinic-local midnight of `from` up to clinic-local midnight after `to`.
+ * The same bounds as `/paiements`' `from` / `to` filter.
+ */
+export const calendarDateRange = (from: string, to: string): InstantRange => ({
+  start: clinicInstant(from),
+  end: startOfNextClinicDay(to),
+});
+
+/**
+ * «Today» for the clinic: the clinic day that contains `now`. 23 h or 25 h
+ * long on a clock-change day — the length is never assumed.
+ */
+export const clinicDayRange = (now: ClinicDateInput): InstantRange => {
+  const today = toClinicDate(now);
+  return calendarDateRange(today, today);
+};
