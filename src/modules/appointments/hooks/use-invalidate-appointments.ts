@@ -11,7 +11,9 @@ import { useTRPC } from "@/trpc/client";
  * Every appointments mutation — the form's create / update, a status change,
  * a drag on the agenda, remove — calls exactly this. Beyond the slice's own
  * reads, a booking changes the patient row's «Prochain rendez-vous» and the
- * dossier's visit count, so the patients reads are refreshed too.
+ * dossier's visit count, so the patients reads are refreshed too. And every
+ * one of them can move a figure on `/tableau-de-bord` — the day's total, the
+ * restants, the waiting room, the agenda rows — hence `dashboard.pathFilter()`.
  *
  * `pathFilter()` is router-wide: every cached input of every appointments
  * procedure — the agenda's ranges, the list's pages, the dossier tab, getOne —
@@ -30,6 +32,7 @@ export const useInvalidateAppointments = () => {
       queryClient.invalidateQueries(trpc.appointments.pathFilter()),
       queryClient.invalidateQueries(trpc.patients.getMany.queryFilter()),
       queryClient.invalidateQueries(trpc.patients.getOne.queryFilter()),
+      queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
     ]);
   }, [queryClient, trpc]);
 };

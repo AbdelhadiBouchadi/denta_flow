@@ -8,17 +8,19 @@ import {
   desc,
   eq,
   getTableColumns,
-  gte,
   ilike,
-  lt,
   or,
   sql,
-  sum,
   type SQL,
 } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 import { db } from "@/database";
+import {
+  paidInRange,
+  receivablesColumns,
+  revenueColumns,
+} from "@/database/sql/receivables";
 import {
   activityLog,
   insurers,
@@ -161,12 +163,15 @@ const badRequest = (message: string) =>
 const conflict = () =>
   new TRPCError({ code: "CONFLICT", message: E.changedMeanwhile });
 
-/** `paidAt` within clinic calendar days; a malformed bound is ignored. */
+/**
+ * `paidAt` within clinic calendar days; a malformed bound is ignored. The
+ * predicate itself is the shared one (`src/database/sql/receivables.ts`).
+ */
 const paidWithin = (from: string, to: string) =>
-  and(
-    isCalendarDate(from) ? gte(payments.paidAt, clinicInstant(from)) : undefined,
-    isCalendarDate(to) ? lt(payments.paidAt, startOfNextClinicDay(to)) : undefined,
-  );
+  paidInRange({
+    start: isCalendarDate(from) ? clinicInstant(from) : undefined,
+    end: isCalendarDate(to) ? startOfNextClinicDay(to) : undefined,
+  });
 
 // ── Balance ─────────────────────────────────────────────────────────────────
 
@@ -509,24 +514,18 @@ export const paymentsRouter = createTRPCRouter({
         to = previousCalendarDate(toClinicDate(addMonths(monthStart, 1)));
       }
 
+      // The SAME fragments as `dashboard.getAdminStats` — one definition of
+      // revenue and of the balances (src/database/sql/receivables.ts).
       const [[collected], [balances]] = await Promise.all([
         db
-          .select({
-            totalCollectedCents: sql<number>`COALESCE(${sum(payments.amountCents)}, 0)::int`,
-            paymentCount: count(),
-          })
+          .select(revenueColumns)
           .from(payments)
           .where(paidWithin(from, to)),
-        db
-          .select({
-            outstandingCents: sql<number>`COALESCE(SUM(GREATEST(${patientRemainingCents}, 0)), 0)::int`,
-            advancesCents: sql<number>`COALESCE(SUM(GREATEST(-(${patientRemainingCents}), 0)), 0)::int`,
-          })
-          .from(patients),
+        db.select(receivablesColumns(patientRemainingCents)).from(patients),
       ]);
 
       return {
-        totalCollectedCents: collected.totalCollectedCents,
+        totalCollectedCents: collected.revenueCents,
         paymentCount: collected.paymentCount,
         outstandingCents: balances.outstandingCents,
         advancesCents: balances.advancesCents,

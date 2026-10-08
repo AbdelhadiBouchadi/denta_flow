@@ -94,6 +94,10 @@ export const parseDH = (input: string) => {
 export const formatDate = (d: ClinicDateInput) =>
   format(toClinicTime(d), "dd/MM/yyyy", { locale: fr });
 
+/** 2026-10-08T10:00:00Z → "jeudi 8 octobre 2026", read on the clinic's wall clock. */
+export const formatLongDate = (d: ClinicDateInput) =>
+  format(toClinicTime(d), "EEEE d MMMM yyyy", { locale: fr });
+
 /**
  * A calendar day "2026-10-02" → "02/10/2026". The value is already a clinic
  * day, not an instant, so it is reformatted as text and never goes through a

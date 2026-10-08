@@ -1,8 +1,11 @@
 import { tzOffset } from "@date-fns/tz";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CLINIC_TIMEZONE } from "@/constants";
 import {
+  addCalendarDays,
+  calendarDateRange,
+  clinicDayRange,
   clinicInstant,
   clinicNow,
   endOfClinicDay,
@@ -272,5 +275,109 @@ describe("startOfNextClinicDay", () => {
     expect(startOfNextClinicDay("2026-03-05").toISOString()).toBe(
       "2026-03-06T00:00:00.000Z",
     );
+  });
+});
+
+// ── clinicDayRange (prompts/22) ─────────────────────────────────────────────
+//
+// «Today» on the dashboard. Summer: Morocco UTC+1, so the clinic day starts
+// at 23:00Z the evening before. 2026-02-15 the clock goes back (03:00 → 02:00,
+// a 25 h day); 2026-03-22 it goes forward (02:00 → 03:00, a 23 h day).
+
+const HOUR_MS = 60 * 60 * 1000;
+
+const expectRange = (
+  range: { start: Date; end: Date },
+  start: string,
+  end: string,
+) => {
+  expect(range.start.toISOString()).toBe(start);
+  expect(range.end.toISOString()).toBe(end);
+};
+
+const clinicDayRangeCases = () => {
+  it("at 23:30 clinic time, is still that clinic day", () => {
+    // 2026-06-15 23:30 in Casablanca (UTC+1) = 22:30Z.
+    expectRange(
+      clinicDayRange("2026-06-15T22:30:00Z"),
+      "2026-06-14T23:00:00.000Z",
+      "2026-06-15T23:00:00.000Z",
+    );
+  });
+
+  it("at 00:30 clinic time, is already the new clinic day — while UTC is still on the old date", () => {
+    // 2026-06-16 00:30 in Casablanca = 2026-06-15 23:30Z.
+    expectRange(
+      clinicDayRange("2026-06-15T23:30:00Z"),
+      "2026-06-15T23:00:00.000Z",
+      "2026-06-16T23:00:00.000Z",
+    );
+  });
+
+  it("is 25 hours long on the day the clinic clock goes back", () => {
+    const range = clinicDayRange("2026-02-15T12:00:00Z");
+    expectRange(range, "2026-02-14T23:00:00.000Z", "2026-02-16T00:00:00.000Z");
+    expect(range.end.getTime() - range.start.getTime()).toBe(25 * HOUR_MS);
+  });
+
+  it("is 23 hours long on the day the clinic clock goes forward", () => {
+    const range = clinicDayRange("2026-03-22T12:00:00Z");
+    expectRange(range, "2026-03-22T00:00:00.000Z", "2026-03-22T23:00:00.000Z");
+    expect(range.end.getTime() - range.start.getTime()).toBe(23 * HOUR_MS);
+  });
+
+  it("contains the instant it was built from, half-open", () => {
+    for (const instant of [
+      "2026-06-15T22:30:00Z",
+      "2026-06-15T23:00:00Z",
+      "2026-03-05T00:00:00Z",
+      "2026-02-15T02:30:00Z",
+    ]) {
+      const { start, end } = clinicDayRange(instant);
+      const at = new Date(instant).getTime();
+      expect(start.getTime()).toBeLessThanOrEqual(at);
+      expect(at).toBeLessThan(end.getTime());
+    }
+  });
+};
+
+describe("clinicDayRange, TZ=UTC", () => {
+  it("runs in UTC", () => {
+    expect(new Date("2026-06-15T12:00:00Z").getTimezoneOffset()).toBe(0);
+  });
+  clinicDayRangeCases();
+});
+
+describe("clinicDayRange, TZ=Asia/Tokyo", () => {
+  let previous: string | undefined;
+  beforeEach(() => {
+    previous = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+  });
+  afterEach(() => {
+    process.env.TZ = previous;
+  });
+
+  it("really runs in Tokyo", () => {
+    expect(new Date("2026-06-15T12:00:00Z").getTimezoneOffset()).toBe(-540);
+  });
+  clinicDayRangeCases();
+});
+
+describe("calendarDateRange", () => {
+  it("covers both days, from clinic midnight to the next clinic midnight", () => {
+    expectRange(
+      calendarDateRange("2026-06-01", "2026-06-30"),
+      "2026-05-31T23:00:00.000Z",
+      "2026-06-30T23:00:00.000Z",
+    );
+  });
+});
+
+describe("addCalendarDays", () => {
+  it("rolls over month and year ends, both ways", () => {
+    expect(addCalendarDays("2026-12-31", 1)).toBe("2027-01-01");
+    expect(addCalendarDays("2026-03-01", -1)).toBe("2026-02-28");
+    expect(addCalendarDays("2026-06-15", 0)).toBe("2026-06-15");
   });
 });

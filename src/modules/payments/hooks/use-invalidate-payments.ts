@@ -16,7 +16,9 @@ import { useTRPC } from "@/trpc/client";
  * - `treatments.pathFilter()` — the per-acte allocation («Reste» on `/actes`
  *   and in the dossier, the form's acte picker);
  * - `patients.pathFilter()` — the dossier header chip, the balance strip of
- *   both tabs, and the patients list's «Reste à payer».
+ *   both tabs, and the patients list's «Reste à payer»;
+ * - `dashboard.pathFilter()` — today's revenue, the period's revenue, reste
+ *   à encaisser, avances and «Soldes à recouvrer».
  *
  * No `setQueryData`, no optimistic update on money.
  */
@@ -29,7 +31,7 @@ export const useInvalidatePayments = () => {
       queryClient.invalidateQueries(trpc.payments.pathFilter()),
       queryClient.invalidateQueries(trpc.treatments.pathFilter()),
       queryClient.invalidateQueries(trpc.patients.pathFilter()),
-      // TODO(branch 22): add trpc.dashboard.pathFilter() once that router exists.
+      queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
     ]);
   }, [queryClient, trpc]);
 };
