@@ -19,24 +19,33 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DEFAULT_PAGE } from "@/constants";
+import { authClient } from "@/lib/auth-client";
+import { ADMIN_ROLE } from "@/modules/dashboard/constants";
+import { insurerOptionLabel } from "@/modules/insurers/options";
 import { useTRPC } from "@/trpc/client";
-import { TREATMENT_COPY as COPY, TREATMENT_STATUS_OPTIONS } from "../constants";
-import { useTreatmentsFilters } from "../hooks/use-treatments-filters";
-import NewTreatmentDialog from "./new-treatment-dialog";
+import { PAYMENT_COPY as COPY, PAYMENT_METHOD_OPTIONS } from "../constants";
+import { usePaymentsFilters } from "../hooks/use-payments-filters";
+import NewPaymentDialog from "./new-payment-dialog";
+import PaymentSummary from "./payment-summary";
 
 /**
- * No reference screen exists for `/actes`: built from the `/patients` and
- * `/rendez-vous` headers — title and primary action, then the filter row.
+ * No reference screen exists for `/paiements`: built from the `/patients`,
+ * `/rendez-vous` and `/actes` headers — title and primary action, the admin
+ * totals, then the filter row.
  */
-const TreatmentsListHeader = () => {
+const PaymentsListHeader = () => {
   const trpc = useTRPC();
-  const [filters, setFilters] = useTreatmentsFilters();
+  const [filters, setFilters] = usePaymentsFilters();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [searchInput, setSearchInput] = useState(filters.search);
 
   // A filter change re-keys the list query, which suspends. Inside a
   // transition React keeps the current table on screen meanwhile.
   const [isFiltering, startTransition] = useTransition();
+
+  // Cosmetic only: getSummary is an adminProcedure (AGENTS.md §2).
+  const { data: session } = authClient.useSession();
+  const isAdmin = session?.user.role === ADMIN_ROLE;
 
   // The URL's search changed from elsewhere (back button, «Effacer»): re-seed
   // the input during render rather than in an effect.
@@ -60,16 +69,14 @@ const TreatmentsListHeader = () => {
     return () => window.clearTimeout(id);
   }, [searchInput, filters.search, setFilters]);
 
-  // Prefetched by the route; `useQuery` because the header sits outside the
-  // Suspense boundary (04-hydration.md §4 rule 8).
-  const { data: practitioners } = useQuery(
-    trpc.schedules.getPractitioners.queryOptions(),
-  );
+  // Prefetched by the route; every insurer, inactive ones included — old
+  // reimbursements still name them.
+  const { data: insurers } = useQuery(trpc.insurers.getMany.queryOptions());
 
   const hasFilters = Boolean(
     filters.search ||
-      filters.status ||
-      filters.practitionerId ||
+      filters.method ||
+      filters.insurerId ||
       filters.from ||
       filters.to,
   );
@@ -92,6 +99,8 @@ const TreatmentsListHeader = () => {
         </Button>
       </div>
 
+      {isAdmin && <PaymentSummary />}
+
       <div
         data-pending={isFiltering ? "" : undefined}
         className="flex flex-wrap items-center gap-2 data-pending:opacity-70"
@@ -110,19 +119,19 @@ const TreatmentsListHeader = () => {
         </InputGroup>
 
         <Select
-          value={filters.status}
-          onValueChange={(value) => narrow({ status: value })}
+          value={filters.method}
+          onValueChange={(value) => narrow({ method: value })}
           items={[
-            { label: COPY.allStatuses, value: null },
-            ...TREATMENT_STATUS_OPTIONS,
+            { label: COPY.allMethods, value: null },
+            ...PAYMENT_METHOD_OPTIONS,
           ]}
         >
           <SelectTrigger size="default" className="h-9 min-w-40">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={null}>{COPY.allStatuses}</SelectItem>
-            {TREATMENT_STATUS_OPTIONS.map((option) => (
+            <SelectItem value={null}>{COPY.allMethods}</SelectItem>
+            {PAYMENT_METHOD_OPTIONS.map((option) => (
               <SelectItem key={option.value} value={option.value}>
                 {option.label}
               </SelectItem>
@@ -131,24 +140,24 @@ const TreatmentsListHeader = () => {
         </Select>
 
         <Select
-          value={filters.practitionerId || null}
-          onValueChange={(value) => narrow({ practitionerId: value ?? "" })}
+          value={filters.insurerId || null}
+          onValueChange={(value) => narrow({ insurerId: value ?? "" })}
           items={[
-            { label: COPY.allPractitioners, value: null },
-            ...(practitioners?.items.map((p) => ({
-              label: p.name,
-              value: p.id,
+            { label: COPY.allInsurers, value: null },
+            ...(insurers?.items.map((insurer) => ({
+              label: insurerOptionLabel(insurer),
+              value: insurer.id,
             })) ?? []),
           ]}
         >
-          <SelectTrigger size="default" className="h-9 min-w-48">
+          <SelectTrigger size="default" className="h-9 min-w-44">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={null}>{COPY.allPractitioners}</SelectItem>
-            {practitioners?.items.map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.name}
+            <SelectItem value={null}>{COPY.allInsurers}</SelectItem>
+            {insurers?.items.map((insurer) => (
+              <SelectItem key={insurer.id} value={insurer.id}>
+                {insurerOptionLabel(insurer)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -173,8 +182,8 @@ const TreatmentsListHeader = () => {
               setSearchInput("");
               narrow({
                 search: "",
-                status: null,
-                practitionerId: "",
+                method: null,
+                insurerId: "",
                 from: "",
                 to: "",
               });
@@ -186,9 +195,9 @@ const TreatmentsListHeader = () => {
         )}
       </div>
 
-      <NewTreatmentDialog open={isDialogOpen} onOpenChange={setIsDialogOpen} />
+      <NewPaymentDialog open={isDialogOpen} onOpenChange={setIsDialogOpen} />
     </div>
   );
 };
 
-export default TreatmentsListHeader;
+export default PaymentsListHeader;

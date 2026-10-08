@@ -1185,6 +1185,11 @@ async function main() {
   }
 
   // Payments — full, partial, unpaid, and overpaid («Avance») accounts.
+  // Built against the BILLABLE total only (in progress + completed, the rule
+  // of src/database/sql/billable.ts), never against planned or canceled
+  // actes. EXACTLY TWO patients end in «Avance», deliberately — the first two
+  // payers below; everyone else ends between 0 and their billable total.
+  // Asserted after the batch is built.
   const paymentRows: NewPayment[] = [];
   const METHODS = [
     ["cash", 55],
@@ -1692,6 +1697,38 @@ async function main() {
   );
   const medicalHistoryRows = [...historyRows.values()];
 
+  // Balances per patient, checked BEFORE anything is written.
+  const billed = new Map<string, number>();
+  for (const t of treatmentRows) {
+    if (t.status === "completed" || t.status === "in_progress") {
+      billed.set(
+        t.patientId,
+        (billed.get(t.patientId) ?? 0) + t.totalAmountCents,
+      );
+    }
+  }
+  const paid = new Map<string, number>();
+  for (const p of paymentRows)
+    paid.set(p.patientId, (paid.get(p.patientId) ?? 0) + p.amountCents);
+  const overpaid = [...paid]
+    .filter(([id, amount]) => amount > (billed.get(id) ?? 0))
+    .map(([id]) => id);
+  // The cases /paiements and the dossier must render, whatever the dice gave.
+  if (overpaid.length !== 2) {
+    throw new Error(`Seed: ${overpaid.length} patients en avance, 2 attendus`);
+  }
+  if (
+    !paymentRows.some((p) => p.method === "insurance" && p.insurerId) ||
+    !paymentRows.some((p) => p.method === "check" && p.reference) ||
+    !paymentRows.some((p) => p.treatmentId) ||
+    !paymentRows.some((p) => !p.treatmentId) ||
+    paymentRows.some(
+      (p) => p.amountCents <= 0 || (p.method === "insurance") !== !!p.insurerId,
+    )
+  ) {
+    throw new Error("Seed: paiements incohérents avec les règles de la branche 20");
+  }
+
   // ── Write — one atomic batch ──────────────────────────────────────────────
   const queries: [BatchItem<"pg">, ...BatchItem<"pg">[]] = [
     db
@@ -1746,21 +1783,6 @@ async function main() {
   await db.batch(queries);
 
   // Counts and ids only — never a patient name (08-clinical.md §6).
-  const billed = new Map<string, number>();
-  for (const t of treatmentRows) {
-    if (t.status === "completed" || t.status === "in_progress") {
-      billed.set(
-        t.patientId,
-        (billed.get(t.patientId) ?? 0) + t.totalAmountCents,
-      );
-    }
-  }
-  const paid = new Map<string, number>();
-  for (const p of paymentRows)
-    paid.set(p.patientId, (paid.get(p.patientId) ?? 0) + p.amountCents);
-  const overpaid = [...paid]
-    .filter(([id, amount]) => amount > (billed.get(id) ?? 0))
-    .map(([id]) => id);
   const statusCounts = appointmentRows.reduce<Record<string, number>>(
     (acc, a) => {
       acc[a.status!] = (acc[a.status!] ?? 0) + 1;
