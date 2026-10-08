@@ -341,17 +341,33 @@ export const expenses = pgTable("expenses", {
 }, (t) => [index("expenses_spent_at_idx").on(t.spentAt)]);
 
 // ── Generated documents registry ────────────────────────────────────────────
+// A facture is a fiscal document: it never changes once issued. The PDF is not
+// stored and never re-rendered from live data — `snapshot` freezes everything
+// printed (clinic identity, patient, lines, totals, number) at generation, and
+// every download renders that snapshot. Its shape is versioned and validated by
+// the documents slice's zod schema.
+// `number` («F-2026-0001») is sequential per type and clinic year, assigned in
+// one INSERT … SELECT guarded by the unique index; deleting never renumbers.
+// `storageUrl` is kept for a future blob provider and is null today.
+// `deletedAt`: «Supprimer» retires a document from every list and from the PDF
+// route but keeps its row, so MAX(seq) still counts it and a deleted LAST
+// number is never reissued (a hard delete would hand «F-2026-0005» out twice).
 export const documents = pgTable("documents", {
   id: text("id").primaryKey().$defaultFn(() => nanoid()),
   patientId: text("patient_id").notNull().references(() => patients.id, { onDelete: "cascade" }),
   type: documentType("type").notNull(),
+  number: text("number"),
   fileName: text("file_name").notNull(),
-  storageUrl: text("storage_url").notNull(),
+  storageUrl: text("storage_url"),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
   generatedByStaffId: text("generated_by_staff_id").references(() => user.id, { onDelete: "set null" }),
+  deletedAt: timestamp("deleted_at"),
+  deletedByStaffId: text("deleted_by_staff_id").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [
   index("documents_patient_idx").on(t.patientId),
   index("documents_created_at_idx").on(t.createdAt),
+  uniqueIndex("documents_type_number_idx").on(t.type, t.number),
 ]);
 
 // ── Odontogram: one row per patient per dentition, plus two layers ──────────

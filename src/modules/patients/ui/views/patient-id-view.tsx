@@ -2,7 +2,6 @@
 
 import { useSuspenseQuery } from "@tanstack/react-query";
 
-import EmptyState from "@/components/shared/empty-state";
 import ErrorState from "@/components/shared/error-state";
 import LoadingState from "@/components/shared/loading-state";
 import { Card } from "@/components/ui/card";
@@ -14,6 +13,7 @@ import { usePatientTab } from "../../hooks/use-patient-tab";
 import { PatientTab } from "../../types";
 import PatientAppointments from "../patient-appointments";
 import PatientBreadcrumb from "../patient-breadcrumb";
+import PatientDocuments from "../patient-documents";
 import PatientDossierHeader from "../patient-dossier-header";
 import PatientInformations from "../patient-informations";
 import PatientMedicalHistory from "../patient-medical-history";
@@ -24,25 +24,6 @@ interface PatientIdViewProps {
   /** An identifier, not data — the only prop a view takes from a page. */
   patientId: string;
 }
-
-/** Copy for the tabs whose slices do not exist yet. */
-const PENDING_TABS: Record<
-  Exclude<
-    PatientTab,
-    | PatientTab.Informations
-    | PatientTab.MedicalHistory
-    | PatientTab.Appointments
-    | PatientTab.Treatments
-    | PatientTab.Payments
-  >,
-  { title: string; description: string }
-> = {
-  [PatientTab.Documents]: {
-    title: "Aucun document",
-    description:
-      "Les factures et documents générés s’afficheront ici dès qu’ils seront disponibles.",
-  },
-};
 
 const PatientIdView = ({ patientId }: PatientIdViewProps) => {
   const trpc = useTRPC();
@@ -126,13 +107,11 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
               <PatientPayments patient={patient} />
             </TabsContent>
 
-            {Object.entries(PENDING_TABS).map(
-              ([value, { title, description }]) => (
-                <TabsContent key={value} value={value} className="py-6">
-                  <EmptyState title={title} description={description} />
-                </TabsContent>
-              ),
-            )}
+            {/* Its own list, plus the facture / devis generators, which read
+                the «Actes» tab's prefetched query. */}
+            <TabsContent value={PatientTab.Documents}>
+              <PatientDocuments patient={patient} />
+            </TabsContent>
           </div>
         </Tabs>
       </Card>
