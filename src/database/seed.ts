@@ -27,6 +27,15 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { nanoid } from "nanoid";
 
 import { CLINIC_TIMEZONE } from "../constants";
+import { toClinicDate } from "../lib/time";
+import { buildDocumentFileName } from "../modules/documents/file-name";
+import { nextDocumentNumber } from "../modules/documents/numbering";
+import {
+  buildDocumentSnapshot,
+  pickPractitionerId,
+  type BuildSnapshotInput,
+} from "../modules/documents/snapshot";
+import { DocumentType } from "../modules/documents/types";
 import { getNgapAct } from "../modules/services/ngap";
 import { db } from "./index";
 import {
@@ -1729,6 +1738,145 @@ async function main() {
     throw new Error("Seed: paiements incohérents avec les règles de la branche 20");
   }
 
+  // ── Documents (prompts/21) ────────────────────────────────────────────────
+  // Generated through the documents slice's OWN snapshot builder, numbering
+  // and file-name rules, so a seeded facture is a real one. Every table is
+  // truncated above, so the numbering restarts at 0001 on each run.
+  // One facture shows an «Avance»; one is a partial selection; two devis.
+  const documentRows: (typeof documents.$inferInsert)[] = [];
+  const issuedNumbers: string[] = [];
+  const staffById = new Map(staffRows.map((s) => [s.id, s]));
+  const isBilled = (t: NewTreatment) =>
+    t.status === "completed" || t.status === "in_progress";
+
+  const addDocument = (
+    type: DocumentType.Invoice | DocumentType.Quote,
+    patient: NewPatient,
+    lines: NewTreatment[],
+    issuedAt: Date,
+  ) => {
+    const number = nextDocumentNumber(type, issuedAt, issuedNumbers);
+    issuedNumbers.push(number);
+    const practitioner = staffById.get(pickPractitionerId(
+      lines.map((t) => ({ practitionerId: t.practitionerId ?? null })),
+      adminId,
+    ))!;
+    const billedCents = billed.get(patient.id) ?? 0;
+    const paidCents = paid.get(patient.id) ?? 0;
+    const base = {
+      number,
+      issuedAt,
+      clinic: {
+        name: clinic.name,
+        address: clinic.address ?? null,
+        city: clinic.city ?? null,
+        phone: clinic.phone ?? null,
+        email: clinic.email ?? null,
+        ice: clinic.ice ?? null,
+        patente: clinic.patente ?? null,
+        fiscalId: clinic.fiscalId ?? null,
+        cnssNumber: clinic.cnssNumber ?? null,
+        inpe: clinic.inpe ?? null,
+        logoUrl: clinic.logoUrl ?? null,
+      },
+      patient: {
+        id: patient.id,
+        shortCode: patient.shortCode,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        cin: patient.cin ?? null,
+        phone: patient.phone,
+      },
+      practitioner: {
+        name: practitioner.name,
+        title: practitioner.title ?? null,
+        inpe: practitioner.inpe ?? null,
+      },
+      lines: lines.map((t) => ({
+        id: t.id,
+        performedAt: t.performedAt ?? null,
+        createdAt: t.createdAt as Date,
+        label: t.label,
+        nomenclatureCode: t.nomenclatureCode ?? null,
+        teeth: t.teeth as string[],
+        totalAmountCents: t.totalAmountCents,
+      })),
+    };
+    // The account as the SQL computes it: billable actes − payments.
+    const input: BuildSnapshotInput =
+      type === DocumentType.Invoice
+        ? {
+            ...base,
+            type,
+            account: {
+              totalAmountCents: billedCents,
+              amountPaidCents: paidCents,
+              remainingCents: billedCents - paidCents,
+            },
+          }
+        : {
+            ...base,
+            type,
+            validUntil: toClinicDate(addDays(issuedAt, 30)),
+          };
+    documentRows.push({
+      id: nanoid(),
+      patientId: patient.id,
+      type,
+      number,
+      fileName: buildDocumentFileName({
+        type,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        issuedAt,
+      }),
+      storageUrl: null,
+      snapshot: buildDocumentSnapshot(input) as Record<string, unknown>,
+      generatedByStaffId: adminId,
+      createdAt: issuedAt,
+    });
+  };
+
+  const actsOf = (patientId: string, holds: (t: NewTreatment) => boolean) =>
+    treatmentRows.filter((t) => t.patientId === patientId && holds(t));
+  const patientById = new Map(patientRows.map((p) => [p.id, p]));
+  // Issued in date order, so numbers and dates agree.
+  const issuedOn = (daysAgo: number, hhmm: string) =>
+    notAfterNow(at(clinicDay(-daysAgo), hhmm));
+
+  const advancePatient = patientById.get(overpaid[0])!;
+  const advanceActs = actsOf(advancePatient.id, isBilled);
+  const owing = patientRows.filter(
+    (p) =>
+      !overpaid.includes(p.id) &&
+      actsOf(p.id, isBilled).length >= 2 &&
+      (billed.get(p.id) ?? 0) > (paid.get(p.id) ?? 0),
+  );
+  const planning = patientRows.filter(
+    (p) => actsOf(p.id, (t) => t.status === "planned").length > 0,
+  );
+  if (advanceActs.length === 0 || owing.length < 2 || planning.length < 2) {
+    throw new Error("Seed: pas assez d’actes pour générer les documents de démonstration");
+  }
+
+  addDocument(DocumentType.Invoice, owing[0], actsOf(owing[0].id, isBilled), issuedOn(12, "10:15"));
+  addDocument(
+    DocumentType.Quote,
+    planning[0],
+    actsOf(planning[0].id, (t) => t.status === "planned"),
+    issuedOn(9, "11:40"),
+  );
+  // A partial selection: the first billable acte only.
+  addDocument(DocumentType.Invoice, owing[1], actsOf(owing[1].id, isBilled).slice(0, 1), issuedOn(6, "16:05"));
+  addDocument(
+    DocumentType.Quote,
+    planning[1],
+    actsOf(planning[1].id, (t) => t.status === "planned"),
+    issuedOn(3, "09:30"),
+  );
+  // The patient in credit: this facture must read «Avance».
+  addDocument(DocumentType.Invoice, advancePatient, advanceActs, issuedOn(1, "17:20"));
+
   // ── Write — one atomic batch ──────────────────────────────────────────────
   const queries: [BatchItem<"pg">, ...BatchItem<"pg">[]] = [
     db
@@ -1777,6 +1925,7 @@ async function main() {
     db.insert(appointments).values(appointmentRows),
     db.insert(treatments).values(treatmentRows),
     db.insert(payments).values(paymentRows),
+    db.insert(documents).values(documentRows),
     db.insert(expenses).values(expenseRows),
     db.insert(tasks).values(taskRows),
   ];
@@ -1806,6 +1955,7 @@ async function main() {
     appointments: appointmentRows.length,
     treatments: treatmentRows.length,
     payments: paymentRows.length,
+    documents: documentRows.length,
     insurancePayments: paymentRows.filter((p) => p.method === "insurance")
       .length,
     expenses: expenseRows.length,
@@ -1813,6 +1963,11 @@ async function main() {
   });
   console.log("Statuts des rendez-vous :", statusCounts);
   console.log("Patients en avance (ids) :", overpaid);
+  // Numbers and ids only — never a patient name.
+  console.log(
+    "Documents (numéro → patient id) :",
+    documentRows.map((d) => `${d.number} → ${d.patientId}`),
+  );
   // Ids only — open each at /patients/<id>?tab=medical_history to check its pill.
   const flagged = (holds: (h: NewMedicalHistory) => boolean) =>
     medicalHistoryRows.filter(holds).map((h) => h.patientId);

@@ -1,6 +1,7 @@
 import { appointmentTypesRouter } from "@/modules/appointment-types/server/procedures";
 import { appointmentsRouter } from "@/modules/appointments/server/procedures";
 import { clinicRouter } from "@/modules/clinic/server/procedures";
+import { documentsRouter } from "@/modules/documents/server/procedures";
 import { insurersRouter } from "@/modules/insurers/server/procedures";
 import { patientsRouter } from "@/modules/patients/server/procedures";
 import { paymentsRouter } from "@/modules/payments/server/procedures";
@@ -32,6 +33,7 @@ export const appRouter = createTRPCRouter({
   appointments: appointmentsRouter,
   treatments: treatmentsRouter,
   payments: paymentsRouter,
+  documents: documentsRouter,
 });
 
 export type AppRouter = typeof appRouter;
