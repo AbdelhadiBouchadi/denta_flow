@@ -387,13 +387,20 @@ export const odontogramCharts = pgTable("odontogram_charts", {
 export const tasks = pgTable("tasks", {
   id: text("id").primaryKey().$defaultFn(() => nanoid()),
   content: text("content").notNull(),
+  // A calendar day, no zone — compared with the clinic's today, computed in TS.
   dueDate: date("due_date", { mode: "string" }),
   isImportant: boolean("is_important").notNull().default(false),
   isDone: boolean("is_done").notNull().default(false),
+  // Set with `isDone` in the same statement, cleared when reopened.
+  completedAt: timestamp("completed_at", { withTimezone: true }),
   createdByStaffId: text("created_by_staff_id").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (t) => [
+  // A done task always knows when; an open one never does.
+  check("tasks_completed_at_matches_is_done", sql`${t.isDone} = (${t.completedAt} IS NOT NULL)`),
+  check("tasks_content_length", sql`char_length(${t.content}) BETWEEN 1 AND 280`),
+]);
 
 // ── Activity log («activité du jour») ───────────────────────────────────────
 export const activityLog = pgTable("activity_log", {
