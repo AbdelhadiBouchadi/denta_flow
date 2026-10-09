@@ -19,6 +19,10 @@ export type AppointmentGetOne = AppointmentsOutputs["getOne"];
 export type AppointmentByPatientItem =
   AppointmentsOutputs["getManyByPatient"]["items"][number];
 
+export type WaitingRoom = AppointmentsOutputs["getWaitingRoom"];
+
+export type WaitingRoomItem = WaitingRoom["items"][number];
+
 /** What `create` and `update` answer — a booking, or a request to confirm one. */
 export type AppointmentWriteResult = AppointmentsOutputs["create"];
 

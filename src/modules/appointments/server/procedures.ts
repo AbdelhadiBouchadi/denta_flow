@@ -27,6 +27,11 @@ import {
   user,
 } from "@/database/schema";
 import { formatTime } from "@/lib/format";
+import { clinicDayRange } from "@/lib/time";
+// The dashboard KPI's own fragment, imported rather than re-written: one
+// definition of «en salle d’attente» (prompts/24, decision 2).
+import { isWaiting } from "@/modules/dashboard/server/today";
+import { formatPatientName } from "@/modules/patients/derived";
 import {
   adminProcedure,
   createTRPCRouter,
@@ -65,6 +70,7 @@ import {
   appointmentListWhere,
   clinicDayOfStart,
 } from "./list-query";
+import { arrivedAtFor } from "../waiting-room";
 import { overlappingAppointment } from "./overlap";
 import { assertEditableBooking } from "./terminal-guard";
 
@@ -257,9 +263,17 @@ const statusStore: AppointmentStatusStore<typeof appointments.$inferSelect> = {
     return (row?.status as AppointmentStatus | undefined) ?? null;
   },
   writeStatusIf: async (id, from, to) => {
+    const now = new Date();
+    // `arrivedAt` rides in the same UPDATE as the status, so the two can
+    // never disagree. `undefined` leaves it out of the SET: kept.
+    const arrivedAt = arrivedAtFor(to, now);
     const [updated] = await db
       .update(appointments)
-      .set({ status: to, updatedAt: new Date() })
+      .set({
+        status: to,
+        updatedAt: now,
+        ...(arrivedAt !== undefined && { arrivedAt }),
+      })
       .where(and(eq(appointments.id, id), eq(appointments.status, from)))
       .returning();
     return updated;
@@ -353,6 +367,66 @@ export const appointmentsRouter = createTRPCRouter({
 
       return { items, total: totals.count, totalPages: 1 };
     }),
+
+  /**
+   * «Salle d’attente»: today's arrived patients, longest wait first. No input
+   * — «today» is the clinic day at the time of the call, so the navbar badge
+   * left open past midnight empties on its next refetch.
+   *
+   * The predicate is the dashboard's `isWaiting` — the ONE definition — so
+   * `count` here equals the «Salle d’attente» KPI card. The count rides on
+   * every row as a window function: the rows and their count come from one
+   * statement and cannot disagree. No amounts (prompts/24, decision 5), and
+   * no staff scoping (AGENTS.md §2).
+   */
+  getWaitingRoom: protectedProcedure.query(async () => {
+    const rows = await db
+      .select({
+        id: appointments.id,
+        arrivedAt: appointments.arrivedAt,
+        startsAt: appointments.startsAt,
+        count: sql<number>`(COUNT(*) OVER ())::int`,
+        // Non-empty allergies — the dossier header's «Alerte médicale».
+        hasMedicalAlert: sql<boolean>`COALESCE(btrim(${patients.allergies}) <> '', FALSE)`,
+        patient: {
+          id: patients.id,
+          firstName: patients.firstName,
+          lastName: patients.lastName,
+          shortCode: patients.shortCode,
+        },
+        type: {
+          label: appointmentTypes.label,
+          color: appointmentTypes.color,
+        },
+        practitioner: { name: user.name },
+      })
+      .from(appointments)
+      .innerJoin(patients, eq(appointments.patientId, patients.id))
+      .leftJoin(appointmentTypes, eq(appointments.typeId, appointmentTypes.id))
+      .leftJoin(user, eq(appointments.practitionerId, user.id))
+      .where(isWaiting(clinicDayRange(new Date())))
+      // Two arrivals in the same millisecond: the id keeps the order stable.
+      .orderBy(asc(appointments.arrivedAt), asc(appointments.id));
+
+    return {
+      count: rows[0]?.count ?? 0,
+      items: rows.map(({ patient, ...row }) => ({
+        id: row.id,
+        // The CHECK makes an arrived row's `arrivedAt` non-null; the column
+        // type cannot say so.
+        arrivedAt: row.arrivedAt ?? row.startsAt,
+        startsAt: row.startsAt,
+        hasMedicalAlert: row.hasMedicalAlert,
+        type: row.type,
+        practitioner: row.practitioner,
+        patient: {
+          id: patient.id,
+          name: formatPatientName(patient),
+          shortCode: patient.shortCode,
+        },
+      })),
+    };
+  }),
 
   getOne: protectedProcedure
     .input(appointmentIdSchema)
