@@ -272,6 +272,11 @@ export const appointments = pgTable("appointments", {
   status: appointmentStatus("status").notNull().default("planned"),
   reason: text("reason"),
   notes: text("notes"),
+  // When the patient entered the waiting room — the «attend depuis» clock.
+  // Written by `updateStatus` in the status's own UPDATE: set on → arrived,
+  // cleared on a correction back to planned / confirmed, kept afterwards
+  // (history). `updatedAt` cannot serve: any edit moves it.
+  arrivedAt: timestamp("arrived_at", { withTimezone: true }),
   createdByStaffId: text("created_by_staff_id").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -279,6 +284,11 @@ export const appointments = pgTable("appointments", {
   index("appointments_starts_at_idx").on(t.startsAt),
   index("appointments_practitioner_starts_at_idx").on(t.practitionerId, t.startsAt),
   index("appointments_patient_idx").on(t.patientId),
+  // An arrived row always has its arrival; a booking not yet arrived never does.
+  check(
+    "appointments_arrived_at_matches_status",
+    sql`(${t.status} <> 'arrived' OR ${t.arrivedAt} IS NOT NULL) AND (${t.status} NOT IN ('planned', 'confirmed') OR ${t.arrivedAt} IS NULL)`,
+  ),
 ]);
 
 // ── Treatments («actes»). label + price are SNAPSHOTS from the service. ─────

@@ -1026,8 +1026,8 @@ async function main() {
   }
   // Today — the dashboard's day (prompts/22). Placed relative to the seeding
   // instant, on a 15-minute grid, so it reads as a clinic in mid-day whatever
-  // the hour: settled appointments END before now, one patient is in the
-  // waiting room, the rest is booked later today, one is canceled. Each
+  // the hour: settled appointments END before now, two patients are in the
+  // waiting room (prompts/24), the rest is booked later today, one is canceled. Each
   // practitioner keeps their own lane, so nothing overlaps (the exclusion
   // constraint). Bookings are allowed outside hours (08-clinical.md §4 rule
   // 7), so this holds on a Sunday or a closure too. A slot that would start
@@ -1051,6 +1051,7 @@ async function main() {
     [0, 90, 45, "planned"],
     [1, -120, 45, "completed"],
     [1, -60, 45, "completed"],
+    [1, -15, 30, "arrived"],
     [1, 15, 30, "canceled"],
     [1, 60, 30, "confirmed"],
     [1, 105, 45, "planned"],
@@ -1104,6 +1105,52 @@ async function main() {
             a.status !== "no_show",
         ) ?? appointmentRows.find((a) => a.endsAt <= now);
       if (target) target.status = status;
+    }
+  }
+
+  // The waiting room (prompts/24), relative to the seeding instant. Today's
+  // arrivals, earliest booking first, came in 27 then 12 minutes ago — one
+  // already past the warning threshold, one not. Any other arrived row (the
+  // guarantee above, near midnight) arrived at its start.
+  const WAITING_MINUTES_AGO = [27, 12];
+  appointmentRows
+    .filter(
+      (a) =>
+        a.status === "arrived" &&
+        a.startsAt >= todayStart &&
+        a.startsAt < tomorrowStart,
+    )
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())
+    .forEach((a, index) => {
+      const minutesAgo = WAITING_MINUTES_AGO[index];
+      if (minutesAgo !== undefined) {
+        a.arrivedAt = new Date(now.getTime() - minutesAgo * 60_000);
+      }
+    });
+  // An arrival never closed yesterday: still `arrived`, NOT in today's
+  // waiting room. 07:30 is before every session, so it overlaps nothing; it
+  // is added after the status guarantees so none of them can rewrite it.
+  const yesterday = clinicDay(-1);
+  const staleType = typeRows.find((t) => t.def.duration === 30) ?? typeRows[0];
+  appointmentRows.push({
+    id: nanoid(),
+    patientId: pick(activePatients).id,
+    practitionerId: dentistIds[0],
+    typeId: staleType.id,
+    startsAt: at(yesterday, "07:30"),
+    endsAt: at(yesterday, "08:00"),
+    reason: pick(staleType.def.reasons),
+    notes: null,
+    status: "arrived",
+    arrivedAt: at(yesterday, "07:20"),
+    createdByStaffId: STAFF.secretary.id,
+    createdAt: at(clinicDay(-int(2, 20)), "10:00"),
+  });
+  // The CHECK `appointments_arrived_at_matches_status`: every arrived row
+  // has its arrival.
+  for (const a of appointmentRows) {
+    if (a.status === "arrived" && !a.arrivedAt) {
+      a.arrivedAt = a.startsAt < now ? a.startsAt : now;
     }
   }
 
@@ -1866,8 +1913,13 @@ async function main() {
     .map(([id, amount]) => amount - (paid.get(id) ?? 0))
     .filter((remaining) => remaining > 0);
   const todayPayments = paymentRows.filter(paidToday);
+  const waitingToday = todayAppointments.filter((a) => a.status === "arrived");
   if (
     todayAppointments.length < 6 ||
+    waitingToday.length !== 2 ||
+    !appointmentRows.some(
+      (a) => a.status === "arrived" && a.startsAt < todayStart,
+    ) ||
     todayPractitioners.size < 2 ||
     !todayPayments.some((p) => p.method === "insurance") ||
     new Set(positiveBalances).size < 5
@@ -2108,6 +2160,9 @@ async function main() {
       acc[a.status!] = (acc[a.status!] ?? 0) + 1;
       return acc;
     }, {}),
+    salleDAttente: waitingToday.map((a) =>
+      Math.round((now.getTime() - a.arrivedAt!.getTime()) / 60_000),
+    ),
     praticiens: todayPractitioners.size,
     paiements: todayPayments.length,
     paiementsAssurance: todayPayments.filter((p) => p.method === "insurance")

@@ -232,6 +232,42 @@ export const APPOINTMENT_COPY = {
   noPatientFound: "Aucun patient trouvé.",
 } as const;
 
+// ── Salle d’attente ─────────────────────────────────────────────────────────
+
+export const WAITING_ROOM_COPY = {
+  title: "Salle d’attente",
+  description: "Patients arrivés pour un rendez-vous d’aujourd’hui.",
+  openLabel: "Ouvrir la salle d’attente",
+  empty: "Personne en salle d’attente.",
+  loading: "Chargement de la salle d’attente…",
+  error: "La salle d’attente n’a pas pu être chargée.",
+  retry: "Réessayer",
+  complete: "Terminer",
+  completeLabel: "Terminer le rendez-vous de",
+  medicalAlert: "Alerte médicale",
+  appointmentAt: "RDV à",
+} as const;
+
+/**
+ * «attend depuis 12 min». «min» is invariable; the hour is spelled out on
+ * the round hour, where it agrees: «1 heure», «2 heures». Past the hour,
+ * the compact «1 h 05».
+ */
+export const formatWaitingTime = (minutes: number) => {
+  if (minutes <= 0) return "vient d’arriver";
+  if (minutes < 60) return `attend depuis ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (rest === 0) {
+    return `attend depuis ${hours} ${hours === 1 ? "heure" : "heures"}`;
+  }
+  return `attend depuis ${hours} h ${String(rest).padStart(2, "0")}`;
+};
+
+/** The badge's accessible name: «Salle d’attente : 2 patients». */
+export const waitingRoomCountLabel = (count: number) =>
+  `${WAITING_ROOM_COPY.title} : ${count === 0 ? "aucun patient" : `${count} ${count === 1 ? "patient" : "patients"}`}`;
+
 /** The day header row's count: «8 rendez-vous» (invariable). */
 export const dayAppointmentCount = (count: number) => `${count} rendez-vous`;
 

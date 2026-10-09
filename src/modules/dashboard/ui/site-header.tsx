@@ -1,14 +1,16 @@
 import ThemeToggle from "@/components/shared/theme-toggle";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { WaitingRoomButton } from "@/modules/appointments/ui/waiting-room-button";
 import { PatientSearch } from "@/modules/dashboard/ui/patient-search";
 import { UserMenu } from "@/modules/dashboard/ui/user-menu";
-import { WaitingRoomBadge } from "@/modules/dashboard/ui/waiting-room-badge";
 
 /**
- * The navbar every dashboard route renders under. Structural: it reads no
- * domain data, and the session it shows comes from `authClient` inside
- * <UserMenu />, which keeps this file a Server Component.
+ * The navbar every dashboard route renders under. Structural itself: the
+ * session it shows comes from `authClient` inside <UserMenu />, and the one
+ * piece of domain data — the «Salle d’attente» count — is read by the
+ * appointments slice's <WaitingRoomButton /> from the query
+ * `(dashboard)/layout.tsx` prefetches. This file stays a Server Component.
  */
 export const SiteHeader = () => {
   // `md:rounded-t-xl` follows the inset panel's own corner: a square sticky
@@ -20,7 +22,7 @@ export const SiteHeader = () => {
       <PatientSearch />
 
       <div className="ml-auto flex items-center gap-2">
-        <WaitingRoomBadge />
+        <WaitingRoomButton />
         <ThemeToggle />
         <Separator orientation="vertical" />
 

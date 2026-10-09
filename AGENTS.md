@@ -156,6 +156,7 @@ src/modules/<domain>/
 - **`ui/views/` holds views, `ui/` holds parts.** Never `views/ui/`, never views at the slice root.
 - The patient dossier's tabs are **nuqs state on one route**, not nested routes.
 - **Clinic identity** (name, logo, ICE, Patente, IF, CNSS, INPE, letterhead) comes from the `clinicSettings` row via `clinic.get` — the sidebar and every printed document. `NEXT_PUBLIC_CLINIC_NAME`, `public/logo.svg` and the teal mark are only fallbacks while the row has no name or logo; `NEXT_PUBLIC_CLINIC_NAME` also feeds `<title>`.
+- **Exception to «a layout fetches no domain data»:** `(dashboard)/layout.tsx` reads the session only to decide whether to prefetch `appointments.getWaitingRoom` for the navbar «Salle d'attente» badge, which reads it with `useQuery` and the same options. The only one — see `04-hydration.md` §5.
 - **Exception to §1.1:** `parametres/page.tsx` declares the settings section list as JSX. The shell composes slices; making `clinic` import every settings slice would invert the dependency. Each settings branch adds one entry there.
 
 > **`src/modules/patients` is the reference implementation.** Every new slice is a structural copy of it. Deviating requires a stated reason in your reply.
