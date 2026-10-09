@@ -111,29 +111,32 @@ export const ClinicSettingsForm = ({ clinic }: ClinicSettingsFormProps) => {
         {CLINIC_SETTINGS_COPY.saveReminder}
       </p>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-8">
+      {/* `grid-cols-1` (`minmax(0, 1fr)`) on every grid here: an implicit
+          `auto` track grows to its widest child's min-content, so one rigid
+          child would push the whole form past a phone's viewport. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-8">
         <FieldGroup className="gap-4">
           {textField("name")}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {textField("address")}
             {textField("city")}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {textField("ice")}
             {textField("patente")}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {textField("fiscalId")}
             {textField("cnssNumber")}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {textField("inpe")}
             {textField("phone", "tel")}
           </div>
           {textField("email", "email")}
         </FieldGroup>
 
-        <div className="grid content-start gap-6 sm:grid-cols-2 lg:grid-cols-1">
+        <div className="grid grid-cols-1 content-start gap-6 sm:grid-cols-2 lg:grid-cols-1">
           <ImageDropzone
             id="logoUrl"
             label={CLINIC_FIELD_LABELS.logoUrl}
@@ -142,7 +145,7 @@ export const ClinicSettingsForm = ({ clinic }: ClinicSettingsFormProps) => {
             change={logoChange}
             onChange={setLogoChange}
             disabled={isDisabled}
-            aspectClassName="aspect-square"
+            aspectClassName="sm:aspect-square"
           />
           <ImageDropzone
             id="letterheadUrl"
@@ -153,7 +156,7 @@ export const ClinicSettingsForm = ({ clinic }: ClinicSettingsFormProps) => {
             onChange={setLetterheadChange}
             disabled={isDisabled}
             // A5 portrait: 148 × 210 mm.
-            aspectClassName="aspect-[148/210]"
+            aspectClassName="sm:aspect-[148/210]"
           />
         </div>
       </div>

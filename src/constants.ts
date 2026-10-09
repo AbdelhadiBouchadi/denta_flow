@@ -52,6 +52,8 @@ export const ASSET_REJECTION_MESSAGES = {
 export const IMAGE_DROPZONE_COPY = {
   dropPrompt: "Glissez-déposez une image ou",
   browse: "parcourez",
+  /** Replaces the two above on a touch screen, where nothing can be dropped. */
+  tapPrompt: "Touchez pour choisir une image",
   dragActive: "Déposez l’image ici",
   formats: "PNG, JPG ou WebP · 4 Mo maximum",
   replace: "Remplacer",

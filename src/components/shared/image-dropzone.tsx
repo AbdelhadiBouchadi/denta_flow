@@ -32,7 +32,10 @@ interface ImageDropzoneProps {
   label: string;
   hint?: string;
   disabled?: boolean;
-  /** The box's shape, e.g. `aspect-square` for a logo. */
+  /**
+   * The box's shape from `sm` up, e.g. `sm:aspect-square` for a logo. Below
+   * `sm` the box stays a compact strip rather than a full-width square.
+   */
   aspectClassName?: string;
   className?: string;
   /** Lands on the file input, so a `FieldLabel htmlFor` opens the picker. */
@@ -81,7 +84,7 @@ const ImageDropzone = ({
   label,
   hint,
   disabled = false,
-  aspectClassName = "aspect-square",
+  aspectClassName = "sm:aspect-square",
   className,
   id,
   "aria-invalid": ariaInvalid,
@@ -179,7 +182,9 @@ const ImageDropzone = ({
           "aria-disabled": disabled || undefined,
         })}
         className={cn(
-          "border-border bg-card relative flex w-full items-center justify-center overflow-hidden rounded-lg border-2 border-dashed transition-colors outline-none",
+          // `min-h-36` keeps the box compact on a phone, where the shape in
+          // `aspectClassName` is expected to apply from `sm` only.
+          "border-border bg-card relative flex min-h-36 w-full items-center justify-center overflow-hidden rounded-lg border-2 border-dashed transition-colors outline-none",
           "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3",
           !hasImage && !disabled && "hover:bg-muted/50 cursor-pointer",
           isDragActive && "border-primary bg-accent",
@@ -188,7 +193,11 @@ const ImageDropzone = ({
           aspectClassName,
         )}
       >
-        <input {...getInputProps({ id })} />
+        {/* Out of the flex row: react-dropzone sizes it `width: 0`, but
+            WebKit (every iOS browser) still floors a flex item at a file
+            control's intrinsic width, and that minimum widened the box — and
+            the `auto` grid track holding it — past a phone's viewport. */}
+        <input {...getInputProps({ id, className: "sr-only" })} />
 
         {hasImage ? (
           <div className="bg-muted absolute inset-0">
@@ -209,10 +218,10 @@ const ImageDropzone = ({
             )}
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-2 p-6 text-center">
+          <div className="flex min-w-0 flex-col items-center gap-2 p-4 text-center sm:p-6">
             <ImageUpIcon
               className={cn(
-                "size-8",
+                "size-8 shrink-0",
                 isDragActive ? "text-primary" : "text-muted-foreground",
               )}
               aria-hidden="true"
@@ -222,10 +231,17 @@ const ImageDropzone = ({
                 {IMAGE_DROPZONE_COPY.dragActive}
               </p>
             ) : (
+              // A touch screen cannot drag a file in: a media query, not a
+              // JS check, picks the wording, so server and client agree.
               <p className="text-ui text-foreground-secondary">
-                {IMAGE_DROPZONE_COPY.dropPrompt}{" "}
-                <span className="text-primary font-medium underline-offset-4 hover:underline">
-                  {IMAGE_DROPZONE_COPY.browse}
+                <span className="pointer-coarse:hidden">
+                  {IMAGE_DROPZONE_COPY.dropPrompt}{" "}
+                  <span className="text-primary font-medium underline-offset-4 hover:underline">
+                    {IMAGE_DROPZONE_COPY.browse}
+                  </span>
+                </span>
+                <span className="text-primary pointer-coarse:inline hidden font-medium">
+                  {IMAGE_DROPZONE_COPY.tapPrompt}
                 </span>
               </p>
             )}
