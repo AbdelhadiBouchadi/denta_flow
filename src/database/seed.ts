@@ -1528,8 +1528,13 @@ async function main() {
     supplier: null,
   });
 
-  // Tasks
+  // Tasks — clinic-wide. Open: one overdue, one due today, important ones,
+  // one without a date. Done over the last 6 weeks, two of them older than the
+  // 30-day window so `/taches` exercises its cut. `completedAt` is set on every
+  // done row: the CHECK `tasks_completed_at_matches_is_done` requires it.
   const due = (offset: number) => format(clinicDay(offset), "yyyy-MM-dd");
+  const completed = (offset: number, hhmm: string) =>
+    notAfterNow(at(clinicDay(offset), hhmm));
   const taskRows: (typeof tasks.$inferInsert)[] = [
     {
       content: "Relancer le laboratoire pour les couronnes en attente",
@@ -1537,6 +1542,20 @@ async function main() {
       isImportant: true,
       isDone: false,
       createdByStaffId: adminId,
+    },
+    {
+      content: "Rappeler le fournisseur : la livraison de composite est en retard",
+      dueDate: due(-2),
+      isImportant: false,
+      isDone: false,
+      createdByStaffId: STAFF.secretary.id,
+    },
+    {
+      content: "Confirmer les rendez-vous de demain par téléphone",
+      dueDate: due(0),
+      isImportant: false,
+      isDone: false,
+      createdByStaffId: STAFF.secretary.id,
     },
     {
       content: "Commander des gants nitrile taille M et des compresses",
@@ -1548,15 +1567,23 @@ async function main() {
     {
       content: "Renouveler le contrat de maintenance de l’autoclave",
       dueDate: due(12),
-      isImportant: false,
+      isImportant: true,
       isDone: false,
       createdByStaffId: adminId,
+    },
+    {
+      content: "Mettre à jour l’affichage des tarifs en salle d’attente",
+      dueDate: null,
+      isImportant: false,
+      isDone: false,
+      createdByStaffId: STAFF.dentist.id,
     },
     {
       content: "Envoyer les dossiers de remboursement CNOPS du mois",
       dueDate: due(-3),
       isImportant: false,
       isDone: true,
+      completedAt: completed(-2, "17:40"),
       createdByStaffId: STAFF.secretary.id,
     },
     {
@@ -1564,6 +1591,23 @@ async function main() {
       dueDate: null,
       isImportant: false,
       isDone: true,
+      completedAt: completed(-12, "11:20"),
+      createdByStaffId: STAFF.assistant.id,
+    },
+    {
+      content: "Faire réviser le compresseur",
+      dueDate: due(-36),
+      isImportant: true,
+      isDone: true,
+      completedAt: completed(-38, "15:05"),
+      createdByStaffId: adminId,
+    },
+    {
+      content: "Archiver les radiographies papier de l’année dernière",
+      dueDate: null,
+      isImportant: false,
+      isDone: true,
+      completedAt: completed(-41, "10:30"),
       createdByStaffId: STAFF.assistant.id,
     },
   ];
