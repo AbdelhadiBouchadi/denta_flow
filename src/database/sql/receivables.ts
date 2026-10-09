@@ -1,6 +1,7 @@
-import { and, count, gte, lt, sql, sum, type SQL } from "drizzle-orm";
+import { count, sql, sum, type SQL } from "drizzle-orm";
 
 import { payments } from "@/database/schema";
+import { inInstantRange, type OptionalInstantRange } from "./range";
 
 /**
  * The clinic's money figures — the ONE definition of each (prompts/22).
@@ -14,15 +15,11 @@ import { payments } from "@/database/schema";
 
 /**
  * `paidAt` inside `[start, end)`. Either bound may be absent (an open-ended
- * `/paiements` filter). The bounds are instants drawn in TypeScript through
- * the clinic timezone (`src/lib/time.ts`), never a date computed by the
- * database, which runs in UTC.
+ * `/paiements` filter). The predicate is the shared one (`range.ts`), the
+ * same that bounds the charges of a period.
  */
-export const paidInRange = ({ start, end }: { start?: Date; end?: Date }) =>
-  and(
-    start ? gte(payments.paidAt, start) : undefined,
-    end ? lt(payments.paidAt, end) : undefined,
-  );
+export const paidInRange = (range: OptionalInstantRange) =>
+  inInstantRange(payments.paidAt, range);
 
 /**
  * Revenue = SUM(amountCents) of the payments selected, every method included

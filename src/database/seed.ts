@@ -19,6 +19,7 @@ import {
   differenceInCalendarDays,
   differenceInYears,
   format,
+  getDaysInMonth,
   parseISO,
   startOfMonth,
 } from "date-fns";
@@ -27,7 +28,7 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { nanoid } from "nanoid";
 
 import { CLINIC_TIMEZONE } from "../constants";
-import { toClinicDate } from "../lib/time";
+import { clinicInstant, toClinicDate } from "../lib/time";
 import { buildDocumentFileName } from "../modules/documents/file-name";
 import { nextDocumentNumber } from "../modules/documents/numbering";
 import {
@@ -1463,7 +1464,11 @@ async function main() {
   moveToToday((p) => p.method === "cash", 1);
   moveToToday((p) => p.method === "card" || p.method === "check", 2);
 
-  // Expenses — the last three months, spread across every category.
+  // Expenses — a cabinet in Agadir, the current month and the two before,
+  // spread across every category. `spentAt` is a clinic DATE stored as the
+  // clinic-midnight instant of that day (prompts/26, decision 3) — the same
+  // conversion the form uses, so a seeded charge reads exactly like a typed
+  // one. Days later than today are skipped: the current month is partial.
   const expenseRows: (typeof expenses.$inferInsert)[] = [];
   for (let m = 0; m < 3; m++) {
     const month = startOfMonth(addMonths(today, -m));
@@ -1471,11 +1476,13 @@ async function main() {
       dayOfMonth: number,
       row: Omit<typeof expenses.$inferInsert, "spentAt" | "createdByStaffId">,
     ) => {
-      const day = addDays(month, dayOfMonth - 1);
+      // «Le 30» in February is its last day, never 1–2 March.
+      const lastDay = getDaysInMonth(month);
+      const day = addDays(month, Math.min(dayOfMonth, lastDay) - 1);
       if (day > today) return;
       expenseRows.push({
         ...row,
-        spentAt: at(day, "10:30"),
+        spentAt: clinicInstant(dayKey(day)),
         createdByStaffId: adminId,
       });
     };
@@ -1491,7 +1498,7 @@ async function main() {
       amountCents: 450000,
       supplier: null,
     });
-    spend(28, {
+    spend(30, {
       label: "Salaire secrétaire médicale",
       category: "salaries",
       amountCents: 400000,
@@ -1546,7 +1553,7 @@ async function main() {
   ) =>
     expenseRows.push({
       ...row,
-      spentAt: at(clinicDay(offset), "11:00"),
+      spentAt: clinicInstant(dayKey(clinicDay(offset))),
       createdByStaffId: adminId,
     });
   oneOff(-64, {

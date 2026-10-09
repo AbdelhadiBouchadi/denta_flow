@@ -6,10 +6,12 @@ import { db } from "@/database";
 import {
   appointments,
   appointmentTypes,
+  expenses,
   patients,
   payments,
   user,
 } from "@/database/schema";
+import { chargesColumns, spentInRange } from "@/database/sql/expenses";
 import {
   paidInRange,
   receivablesColumns,
@@ -28,6 +30,7 @@ import { periodDates, periodRange } from "../period";
 import {
   greetingForHour,
   LATE_AFTER_MINUTES,
+  netProfitCents,
   TOP_DEBTORS_LIMIT,
 } from "../rules";
 import { adminStatsSchema } from "../schemas";
@@ -159,23 +162,31 @@ export const dashboardRouter = createTRPCRouter({
    * revenue and today's are the same fragment over two ranges; the balances
    * are the same SQL as `payments.getSummary` — as of now, whatever the
    * period.
+   *
+   * «Charges» is the same fragment as `expenses.getSummary`
+   * (src/database/sql/expenses.ts) over the SAME range object as the
+   * revenue, so «Bénéfice net» subtracts two figures bounded identically.
+   * The net is `null` when the period has no charge (decision 5).
    */
   getAdminStats: adminProcedure
     .input(adminStatsSchema)
     .query(async ({ input }) => {
       const now = new Date();
       const period = periodDates(input.period, now);
+      const range = periodRange(input.period, now);
 
-      const [[periodRevenue], [todayRevenue], [balances]] = await db.batch([
+      const [[periodRevenue], [todayRevenue], [balances], [charges]] =
+        await db.batch([
         db
           .select(revenueColumns)
           .from(payments)
-          .where(paidInRange(periodRange(input.period, now))),
+          .where(paidInRange(range)),
         db
           .select(revenueColumns)
           .from(payments)
           .where(paidInRange(clinicDayRange(now))),
         db.select(receivablesColumns(remainingCents)).from(patients),
+        db.select(chargesColumns).from(expenses).where(spentInRange(range)),
       ]);
 
       return {
@@ -185,6 +196,13 @@ export const dashboardRouter = createTRPCRouter({
         todayRevenueCents: todayRevenue.revenueCents,
         outstandingCents: balances.outstandingCents,
         advancesCents: balances.advancesCents,
+        chargesCents: charges.chargesCents,
+        expenseCount: charges.expenseCount,
+        netCents: netProfitCents({
+          revenueCents: periodRevenue.revenueCents,
+          chargesCents: charges.chargesCents,
+          expenseCount: charges.expenseCount,
+        }),
       };
     }),
 });
