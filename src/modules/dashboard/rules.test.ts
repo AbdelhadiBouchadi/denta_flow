@@ -7,7 +7,7 @@ import {
   remainingHint,
   todaySummary,
 } from "./constants";
-import { arrivalPath, greetingForHour } from "./rules";
+import { arrivalPath, greetingForHour, netProfitCents } from "./rules";
 import { Greeting } from "./types";
 
 describe("greetingForHour", () => {
@@ -121,5 +121,25 @@ describe("arrivalPath", () => {
     ]) {
       expect(arrivalPath(status)).toEqual([]);
     }
+  });
+});
+
+describe("netProfitCents (prompts/26, decision 5)", () => {
+  it("is revenue minus charges when the period has a charge", () => {
+    expect(
+      netProfitCents({ revenueCents: 5_000_000, chargesCents: 1_200_000, expenseCount: 4 }),
+    ).toBe(3_800_000);
+  });
+
+  it("is negative on a loss — never clamped", () => {
+    expect(
+      netProfitCents({ revenueCents: 100_000, chargesCents: 800_000, expenseCount: 1 }),
+    ).toBe(-700_000);
+  });
+
+  it("is null when no charge is recorded, never the revenue itself", () => {
+    expect(
+      netProfitCents({ revenueCents: 5_000_000, chargesCents: 0, expenseCount: 0 }),
+    ).toBeNull();
   });
 });

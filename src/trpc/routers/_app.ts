@@ -3,6 +3,7 @@ import { appointmentsRouter } from "@/modules/appointments/server/procedures";
 import { clinicRouter } from "@/modules/clinic/server/procedures";
 import { dashboardRouter } from "@/modules/dashboard/server/procedures";
 import { documentsRouter } from "@/modules/documents/server/procedures";
+import { expensesRouter } from "@/modules/expenses/server/procedures";
 import { insurersRouter } from "@/modules/insurers/server/procedures";
 import { patientsRouter } from "@/modules/patients/server/procedures";
 import { paymentsRouter } from "@/modules/payments/server/procedures";
@@ -38,6 +39,7 @@ export const appRouter = createTRPCRouter({
   documents: documentsRouter,
   dashboard: dashboardRouter,
   tasks: tasksRouter,
+  expenses: expensesRouter,
 });
 
 export type AppRouter = typeof appRouter;

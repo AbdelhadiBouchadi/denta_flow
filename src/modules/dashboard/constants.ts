@@ -93,8 +93,12 @@ export const UNKNOWN_STAFF_NAME = "Membre du cabinet";
 // - «Reste à encaisser» / «Avances»: the same SQL as `payments.getSummary`,
 //   balances as of now — independent of the period.
 //
-// No «Charges» and no «Net» in V1 (the charges screen is V1.1), and no
-// activity feed: it would print payment amounts to staff who must not see
+// - «Charges»: SUM(expenses.amountCents) with `spentAt` in the period — the
+//   same fragment as `expenses.getSummary` (src/database/sql/expenses.ts).
+// - «Bénéfice net»: revenue − charges over the same period; «Aucune charge
+//   saisie» instead when the period has no charge (prompts/26, decision 5).
+//
+// No activity feed: it would print payment amounts to staff who must not see
 // revenue.
 
 /** The literal union the nuqs parser and the Zod enum accept. */
@@ -176,6 +180,12 @@ export const paymentCountHint = (count: number) =>
     ? "Aucun paiement"
     : `${count} ${count === 1 ? "paiement" : "paiements"}`;
 
+/** «4 charges» under the period's charges. */
+export const expenseCountHint = (count: number) =>
+  count === 0
+    ? "Aucune charge"
+    : `${count} ${count === 1 ? "charge" : "charges"}`;
+
 /** «30 min» — the appointment's length, already computed by the server. */
 export const durationLabel = (minutes: number) => {
   if (minutes < 60) return `${minutes} min`;
@@ -212,6 +222,12 @@ export const DASHBOARD_COPY = {
   periodRevenue: "Revenu de la période",
   outstanding: "Reste à encaisser",
   advances: "Avances",
+  charges: "Charges",
+  net: "Bénéfice net",
+  netHint: "Revenu de la période moins ses charges",
+  noCharges: "Aucune charge saisie",
+  noChargesHint: "Saisissez les charges de la période pour obtenir le net.",
+  chargesLink: "Voir les charges",
   balancesCaption: "Reste à encaisser et avances : situation actuelle",
   loadingTitle: "Chargement du tableau de bord",
   loadingDescription: "Merci de patienter quelques instants…",

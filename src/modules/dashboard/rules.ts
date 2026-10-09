@@ -51,6 +51,24 @@ export const arrivalPath = (from: AppointmentStatus): AppointmentStatus[] => {
   return via ? [via, AppointmentStatus.Arrived] : [];
 };
 
+/**
+ * «Bénéfice net» = revenue − charges over the same period, or `null` when
+ * the period has no recorded charge (prompts/26, decision 5): a net equal to
+ * the revenue would claim «no costs» when the truth is «costs not entered».
+ * The view shows «Aucune charge saisie» for `null`. Never clamped: a loss is
+ * a negative net.
+ */
+export const netProfitCents = ({
+  revenueCents,
+  chargesCents,
+  expenseCount,
+}: {
+  revenueCents: number;
+  chargesCents: number;
+  expenseCount: number;
+}): number | null =>
+  expenseCount > 0 ? revenueCents - chargesCents : null;
+
 /** Bonjour before 12:00, Bon après-midi until 18:00, Bonsoir after. */
 export const greetingForHour = (hour: number): Greeting => {
   if (hour < 12) return Greeting.Morning;

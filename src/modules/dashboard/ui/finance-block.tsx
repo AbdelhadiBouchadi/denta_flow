@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useTransition } from "react";
 
 import MaskedAmount from "@/components/shared/masked-amount";
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 import {
   DASHBOARD_COPY as COPY,
   DASHBOARD_PERIOD_OPTIONS,
+  expenseCountHint,
   paymentCountHint,
 } from "../constants";
 import { useAdminStats } from "../hooks/use-dashboard-queries";
@@ -39,7 +41,9 @@ import type { DashboardPeriod } from "../types";
  * dropping the whole dashboard back to its skeleton.
  *
  * Reste à encaisser and Avances are balances as of now — the caption says so,
- * since they do not move with the period.
+ * since they do not move with the period. Charges and Bénéfice net DO move
+ * with it; the net is replaced by «Aucune charge saisie» when the server
+ * returns none (prompts/26, decision 5).
  */
 export const FinanceBlock = () => {
   const { data } = useAdminStats();
@@ -90,6 +94,45 @@ export const FinanceBlock = () => {
           hint={`${periodRangeLabel(data.period)} · ${paymentCountHint(data.paymentCount)}`}
           cents={data.revenueCents}
         />
+        {/* Charges and net share the revenue's period — same range object
+            on the server. */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <Figure
+              label={COPY.charges}
+              hint={expenseCountHint(data.expenseCount)}
+              cents={data.chargesCents}
+            />
+            <Link
+              href={`/charges?from=${data.period.from}&to=${data.period.to}`}
+              className="text-primary w-fit text-xs underline-offset-4 hover:underline"
+            >
+              {COPY.chargesLink}
+            </Link>
+          </div>
+          {data.netCents === null ? (
+            // Decision 5: no charge recorded ⇒ no net. A net equal to the
+            // revenue would read as «no costs».
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="text-muted-foreground text-sm">{COPY.net}</span>
+              <span className="text-muted-foreground text-lg font-semibold">
+                {COPY.noCharges}
+              </span>
+              <span className="text-muted-foreground text-xs">
+                {COPY.noChargesHint}
+              </span>
+            </div>
+          ) : (
+            <Figure
+              label={COPY.net}
+              hint={COPY.netHint}
+              cents={data.netCents}
+              className={
+                data.netCents < 0 ? "text-danger-strong" : "text-success-strong"
+              }
+            />
+          )}
+        </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
           <Figure
             label={COPY.outstanding}
