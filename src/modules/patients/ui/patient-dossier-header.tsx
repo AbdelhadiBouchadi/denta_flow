@@ -14,7 +14,8 @@ import {
   VenusAndMarsIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Suspense, useState, type ReactNode } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "sonner";
 
 import GeneratedAvatar from "@/components/shared/generated-avatar";
@@ -43,7 +44,10 @@ import { PaymentStatus, type Gender, type PatientGetOne } from "../types";
 import MedicalAlertPills from "./medical-alert-pills";
 import PatientActions from "./patient-actions";
 import { PatientTags } from "./patient-tags";
-import PatientUpcomingAppointments from "./patient-upcoming-appointments";
+import PatientUpcomingAppointments, {
+  PatientUpcomingAppointmentsError,
+  PatientUpcomingAppointmentsLoading,
+} from "./patient-upcoming-appointments";
 import { PaymentAmount } from "./payment-amount";
 
 interface PatientDossierHeaderProps {
@@ -321,7 +325,18 @@ const PatientDossierHeader = ({ patient }: PatientDossierHeaderProps) => {
             appointments under them. Full width on a phone. */}
         <div className="flex min-w-0 flex-col gap-4 lg:w-80 lg:shrink-0 lg:items-end">
           <PatientActions patient={patient} />
-          <PatientUpcomingAppointments patientId={patient.id} />
+          {/* Its own boundaries: a failed or slow `getUpcomingByPatient`
+              stays in this box, and the dossier, «Modifier» and the quick
+              actions above it keep working. `resetKeys` re-arms it when the
+              route moves to another patient. */}
+          <ErrorBoundary
+            FallbackComponent={PatientUpcomingAppointmentsError}
+            resetKeys={[patient.id]}
+          >
+            <Suspense fallback={<PatientUpcomingAppointmentsLoading />}>
+              <PatientUpcomingAppointments patientId={patient.id} />
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </div>
     </Card>

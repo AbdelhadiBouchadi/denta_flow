@@ -1,8 +1,15 @@
 "use client";
 
-import { useSuspenseQuery } from "@tanstack/react-query";
-import { PencilIcon } from "lucide-react";
-import { useState, type CSSProperties } from "react";
+import {
+  useQueryErrorResetBoundary,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
+import { PencilIcon, RotateCcwIcon } from "lucide-react";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import type { FallbackProps } from "react-error-boundary";
+
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 import { formatDate, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -14,7 +21,29 @@ import { useTRPC } from "@/trpc/client";
 const COPY = {
   title: "Prochains rendez-vous",
   empty: "Aucun rendez-vous à venir.",
+  loading: "Chargement des prochains rendez-vous…",
+  error: "Les prochains rendez-vous n’ont pas pu être chargés.",
+  retry: "Réessayer",
 } as const;
+
+/**
+ * The titled section every state renders in — data, loading and error — so
+ * the header keeps its shape whatever the read does.
+ */
+const UpcomingFrame = ({ children }: { children: ReactNode }) => (
+  <section
+    aria-labelledby="upcoming-appointments-title"
+    className="flex w-full min-w-0 flex-col gap-2"
+  >
+    <h2
+      id="upcoming-appointments-title"
+      className="text-muted-foreground text-label"
+    >
+      {COPY.title}
+    </h2>
+    {children}
+  </section>
+);
 
 interface PatientUpcomingAppointmentsProps {
   patientId: string;
@@ -30,6 +59,10 @@ interface PatientUpcomingAppointmentsProps {
  * Below `lg` the cards are a horizontal strip that scrolls INSIDE its own
  * box: the list is `overflow-x-auto` and every ancestor up to the card is
  * `min-w-0`, so three cards never push the page wider than the screen.
+ *
+ * The header wraps it in its OWN Suspense and ErrorBoundary (the Loading and
+ * Error exports below): this read is secondary, and a failure here must never
+ * take down the dossier — or «Modifier», «+ Paiement» beside it — with it.
  */
 const PatientUpcomingAppointments = ({
   patientId,
@@ -42,17 +75,7 @@ const PatientUpcomingAppointments = ({
   const [editing, setEditing] = useState<AppointmentListItem | null>(null);
 
   return (
-    <section
-      aria-labelledby="upcoming-appointments-title"
-      className="flex w-full min-w-0 flex-col gap-2"
-    >
-      <h2
-        id="upcoming-appointments-title"
-        className="text-muted-foreground text-label"
-      >
-        {COPY.title}
-      </h2>
-
+    <UpcomingFrame>
       {data.items.length === 0 ? (
         <p className="text-muted-foreground bg-muted/50 rounded-lg px-3 py-2 text-sm">
           {COPY.empty}
@@ -78,7 +101,7 @@ const PatientUpcomingAppointments = ({
           initialValues={editing}
         />
       )}
-    </section>
+    </UpcomingFrame>
   );
 };
 
@@ -127,5 +150,50 @@ const UpcomingCard = ({
     />
   </button>
 );
+
+/** One placeholder card while the read is in flight — never the whole dossier. */
+export const PatientUpcomingAppointmentsLoading = () => (
+  <UpcomingFrame>
+    <Skeleton
+      aria-label={COPY.loading}
+      role="status"
+      className="h-16 w-60 rounded-lg lg:w-full"
+    />
+  </UpcomingFrame>
+);
+
+/**
+ * A failed read stays in its box. «Réessayer» clears the failed query first —
+ * otherwise `useSuspenseQuery` would rethrow the cached error — then resets
+ * the boundary, which re-renders the widget and refetches (the dashboard
+ * view's pattern).
+ */
+export const PatientUpcomingAppointmentsError = ({
+  resetErrorBoundary,
+}: FallbackProps) => {
+  const { reset } = useQueryErrorResetBoundary();
+
+  return (
+    <UpcomingFrame>
+      <div
+        role="alert"
+        className="bg-muted/50 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2"
+      >
+        <p className="text-muted-foreground text-sm">{COPY.error}</p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            reset();
+            resetErrorBoundary();
+          }}
+        >
+          <RotateCcwIcon />
+          {COPY.retry}
+        </Button>
+      </div>
+    </UpcomingFrame>
+  );
+};
 
 export default PatientUpcomingAppointments;
