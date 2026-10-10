@@ -669,6 +669,9 @@ export const appointmentsRouter = createTRPCRouter({
         existing.practitionerId !== input.practitionerId ||
         existing.startsAt.getTime() !== slot.startsAt.getTime() ||
         existing.endsAt.getTime() !== slot.endsAt.getTime();
+      const appointmentMoved =
+        existing.practitionerId !== input.practitionerId ||
+        existing.startsAt.getTime() !== slot.startsAt.getTime();
 
       const [, , warnings] = await Promise.all([
         assertPractitioner(input.practitionerId, existing.practitionerId),
@@ -708,9 +711,8 @@ export const appointmentsRouter = createTRPCRouter({
               .where(and(eq(appointments.id, input.id), version))
               .returning();
 
-            // Only a new slot or practitioner is logged («déplacé»): an
-            // edited reason or note is not activity anyone follows.
-            if (!slotChanged) {
+            // Only a changed practitioner or start time is logged («déplacé»).
+            if (!appointmentMoved) {
               const [row] = await write;
               return row;
             }
