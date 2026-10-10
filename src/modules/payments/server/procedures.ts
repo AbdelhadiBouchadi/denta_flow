@@ -22,14 +22,12 @@ import {
   revenueColumns,
 } from "@/database/sql/receivables";
 import {
-  activityLog,
   insurers,
   patients,
   payments,
   treatments,
   user,
 } from "@/database/schema";
-import { formatDH } from "@/lib/format";
 import {
   clinicInstant,
   clinicNow,
@@ -38,6 +36,9 @@ import {
   startOfNextClinicDay,
   toClinicDate,
 } from "@/lib/time";
+import { logActivity } from "@/modules/activity/server/log";
+import { PAYMENT_SUMMARIES } from "@/modules/activity/summaries";
+import { ActivityAction, ActivityEntityType } from "@/modules/activity/types";
 import { formatPatientName } from "@/modules/patients/derived";
 import {
   amountPaidCents as patientAmountPaidCents,
@@ -51,7 +52,6 @@ import {
 } from "@/trpc/init";
 import {
   PATIENT_PAYMENTS_LIMIT,
-  PAYMENT_ACTIVITY,
   PAYMENT_SERVER_ERRORS as E,
 } from "../constants";
 import { resolvePaidAt } from "../form-values";
@@ -80,11 +80,10 @@ import {
  * an optional allocation; the patient's `remainingCents` is the real number,
  * read through the patients slice's own SQL so every screen agrees.
  *
- * Every write lands with its `activityLog` row in ONE `db.batch` — one Neon
- * HTTP transaction. A deleted payment leaves a trail with its amount.
+ * Every write lands with its activity line in ONE `db.batch` — one Neon
+ * HTTP transaction — through `logActivity`. A deleted payment leaves a trail
+ * with its amount; payment lines are read by admins only.
  */
-
-const ENTITY_TYPE = "payment";
 
 // ── Row shape ───────────────────────────────────────────────────────────────
 
@@ -347,31 +346,20 @@ const needsConfirmation = (check: {
 });
 
 /**
- * The activity row as INSERT … SELECT from the payment itself, `FOR UPDATE`:
- * written only if the payment is at `version`. After a create or an update it
- * follows the write and keys on the version that write stamped, so it lands
- * exactly when the write did. Before a remove it locks the row, so the delete
- * that follows cannot miss. Either both land, or neither.
+ * The activity line, guarded on the payment itself (`logActivity`'s guarded
+ * form): written only if the payment is at `version`. After a create or an
+ * update it follows the write and keys on the version that write stamped, so
+ * it lands exactly when the write did. Before a remove it locks the row, so
+ * the delete that follows cannot miss. Either both land, or neither.
  */
 const logFromPayment = (
   id: string,
   version: Date,
-  entry: { action: string; summary: string; staffId: string },
+  entry: { action: ActivityAction; patientId: string; summary: string; staffId: string },
 ) =>
-  db.insert(activityLog).select(
-    db
-      .select({
-        id: sql<string>`${nanoid()}::text`.as("id"),
-        entityType: sql<string>`${ENTITY_TYPE}::text`.as("entity_type"),
-        entityId: payments.id,
-        action: sql<string>`${entry.action}::text`.as("action"),
-        summary: sql<string>`${entry.summary}::text`.as("summary"),
-        staffId: sql<string>`${entry.staffId}::text`.as("staff_id"),
-        createdAt: sql<Date>`now()`.as("created_at"),
-      })
-      .from(payments)
-      .where(and(eq(payments.id, id), versionMatches(version)))
-      .for("update"),
+  logActivity(
+    { entityType: ActivityEntityType.Payment, entityId: id, ...entry },
+    { table: payments, where: and(eq(payments.id, id), versionMatches(version)) },
   );
 
 /** The stored payment the update and remove rules read. */
@@ -553,9 +541,9 @@ export const paymentsRouter = createTRPCRouter({
     .mutation(async ({ input, ctx }) => {
       const patient = await assertReferences(input);
       const values = writableValues(input);
-      const summary = PAYMENT_ACTIVITY.created(
+      const summary = PAYMENT_SUMMARIES.created(
         formatPatientName(patient),
-        formatDH(input.amountCents),
+        input.amountCents,
       );
       let remainingCents = patient.remainingCents;
 
@@ -612,7 +600,8 @@ export const paymentsRouter = createTRPCRouter({
               )
               .returning(),
             logFromPayment(id, stamp, {
-              action: "created",
+              action: ActivityAction.Created,
+              patientId: input.patientId,
               summary,
               staffId: ctx.auth.user.id,
             }),
@@ -670,10 +659,10 @@ export const paymentsRouter = createTRPCRouter({
 
       const patient = await assertReferences(input, existing);
       const values = writableValues(input);
-      const summary = PAYMENT_ACTIVITY.updated(
+      const summary = PAYMENT_SUMMARIES.updated(
         formatPatientName(existing.patient),
-        formatDH(existing.amountCents),
-        formatDH(input.amountCents),
+        existing.amountCents,
+        input.amountCents,
       );
       let remainingCents = patient.remainingCents;
 
@@ -712,7 +701,8 @@ export const paymentsRouter = createTRPCRouter({
             // Keyed on the version the update just stamped: logged exactly
             // when the update landed.
             logFromPayment(input.id, stamp, {
-              action: "updated",
+              action: ActivityAction.Updated,
+              patientId: existing.patientId,
               summary,
               staffId: ctx.auth.user.id,
             }),
@@ -754,11 +744,11 @@ export const paymentsRouter = createTRPCRouter({
 
       const [, [removed]] = await db.batch([
         logFromPayment(input.id, existing.updatedAt, {
-          action: "deleted",
-          summary: PAYMENT_ACTIVITY.removed(
+          action: ActivityAction.Deleted,
+          patientId: existing.patientId,
+          summary: PAYMENT_SUMMARIES.removed(
             formatPatientName(existing.patient),
-            formatDH(existing.amountCents),
-            formatDH(0),
+            existing.amountCents,
           ),
           staffId: ctx.auth.user.id,
         }),

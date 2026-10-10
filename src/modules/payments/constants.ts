@@ -72,23 +72,6 @@ export const PAYMENT_SERVER_ERRORS = {
     "Ce paiement a été modifié entre-temps. Rechargez-le avant de réessayer.",
 } as const;
 
-// ── Activity log ────────────────────────────────────────────────────────────
-// Rendered verbatim by the «Activité du jour» screen (V1.1). Each sentence
-// names the patient and the amount; update/remove name both amounts, so a
-// deleted payment leaves a trail of what it was.
-
-export const PAYMENT_ACTIVITY = {
-  created: (patient: string, amount: string) =>
-    `Paiement de ${amount} enregistré pour ${patient}.`,
-  updated: (patient: string, before: string, after: string) =>
-    before === after
-      ? `Paiement de ${after} modifié pour ${patient}.`
-      : `Paiement de ${patient} modifié : ${before} → ${after}.`,
-  /** `after` is the zero amount, formatted by the caller. */
-  removed: (patient: string, before: string, after: string) =>
-    `Paiement de ${patient} supprimé : ${before} → ${after}.`,
-} as const;
-
 // ── UI copy ─────────────────────────────────────────────────────────────────
 
 export const PAYMENT_FIELD_LABELS = {

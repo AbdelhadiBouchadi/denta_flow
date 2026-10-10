@@ -71,6 +71,13 @@
       "when": 1791546550052,
       "tag": "0009_appointments_arrived_at",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791669849370,
+      "tag": "0010_activity_log_patient",
+      "breakpoints": true
     }
   ]
 }

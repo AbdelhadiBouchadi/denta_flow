@@ -18,7 +18,6 @@ import { nanoid } from "nanoid";
 
 import { db } from "@/database";
 import {
-  activityLog,
   clinicSettings,
   documents,
   patients,
@@ -31,6 +30,9 @@ import {
   isCalendarDate,
   startOfNextClinicDay,
 } from "@/lib/time";
+import { logActivity } from "@/modules/activity/server/log";
+import { DOCUMENT_SUMMARIES } from "@/modules/activity/summaries";
+import { ActivityAction, ActivityEntityType } from "@/modules/activity/types";
 import { formatPatientName } from "@/modules/patients/derived";
 import {
   amountPaidCents as patientAmountPaidCents,
@@ -43,7 +45,6 @@ import {
   protectedProcedure,
 } from "@/trpc/init";
 import {
-  DOCUMENT_ACTIVITY,
   DOCUMENT_NUMBER_MAX_ATTEMPTS,
   DOCUMENT_SERVER_ERRORS as E,
   PATIENT_DOCUMENTS_LIMIT,
@@ -80,11 +81,9 @@ import { DocumentType, type GeneratedDocumentType } from "../types";
  * (prompts/21, decision 1). The snapshot is built HERE, from the database —
  * the client names actes by id and nothing else.
  *
- * Every write lands with its `activityLog` row in ONE `db.batch` — one Neon
- * HTTP transaction.
+ * Every write lands with its activity line in ONE `db.batch` — one Neon
+ * HTTP transaction — through `logActivity`.
  */
-
-const ENTITY_TYPE = "document";
 
 // ── Row shape ───────────────────────────────────────────────────────────────
 
@@ -267,27 +266,23 @@ const insertNumbered = ({
   `);
 };
 
-/** The log row, read from the document the batch just inserted. */
+/**
+ * The activity line, guarded on the live document (`logActivity`'s guarded
+ * form). After the insert it reads the number the insert assigned and puts
+ * it in the sentence; before a remove it locks the row the update retires.
+ */
 const logFromDocument = (
   id: string,
-  entry: { action: string; summary: string; staffId: string },
+  entry: { action: ActivityAction; patientId: string; summary: string; staffId: string },
 ) =>
-  db.insert(activityLog).select(
-    db
-      .select({
-        id: sql<string>`${nanoid()}::text`.as("id"),
-        entityType: sql<string>`${ENTITY_TYPE}::text`.as("entity_type"),
-        entityId: documents.id,
-        action: sql<string>`${entry.action}::text`.as("action"),
-        summary: sql<string>`replace(${entry.summary}::text, ${NUMBER_TOKEN}::text, ${documents.number})`.as(
-          "summary",
-        ),
-        staffId: sql<string>`${entry.staffId}::text`.as("staff_id"),
-        createdAt: sql<Date>`now()`.as("created_at"),
-      })
-      .from(documents)
-      .where(and(eq(documents.id, id), isLiveDocument))
-      .for("update"),
+  logActivity(
+    {
+      entityType: ActivityEntityType.Document,
+      entityId: id,
+      ...entry,
+      summary: sql`replace(${entry.summary}::text, ${NUMBER_TOKEN}::text, ${documents.number})`,
+    },
+    { table: documents, where: and(eq(documents.id, id), isLiveDocument) },
   );
 
 /** drizzle wraps driver errors; the Postgres code sits on `cause`. */
@@ -364,7 +359,7 @@ const generate = async (input: GenerateInput, staffId: string) => {
     lastName: patient.lastName,
     issuedAt,
   });
-  const summary = DOCUMENT_ACTIVITY.generated(
+  const summary = DOCUMENT_SUMMARIES.generated(
     input.type,
     NUMBER_TOKEN,
     formatPatientName(patient),
@@ -384,7 +379,12 @@ const generate = async (input: GenerateInput, staffId: string) => {
           staffId,
           issuedAt,
         }),
-        logFromDocument(id, { action: "generated", summary, staffId }),
+        logFromDocument(id, {
+          action: ActivityAction.Generated,
+          patientId: patient.id,
+          summary,
+          staffId,
+        }),
       ]);
       return { id };
     }, DOCUMENT_NUMBER_MAX_ATTEMPTS);
@@ -531,6 +531,7 @@ export const documentsRouter = createTRPCRouter({
       const [existing] = await db
         .select({
           type: documents.type,
+          patientId: documents.patientId,
           patient: { firstName: patients.firstName, lastName: patients.lastName },
         })
         .from(documents)
@@ -544,8 +545,9 @@ export const documentsRouter = createTRPCRouter({
       // neither happens.
       const [, [removed]] = await db.batch([
         logFromDocument(input.id, {
-          action: "deleted",
-          summary: DOCUMENT_ACTIVITY.removed(
+          action: ActivityAction.Deleted,
+          patientId: existing.patientId,
+          summary: DOCUMENT_SUMMARIES.removed(
             existing.type as GeneratedDocumentType,
             NUMBER_TOKEN,
             formatPatientName(existing.patient),

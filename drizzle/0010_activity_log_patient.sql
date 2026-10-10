@@ -1,0 +1,3 @@
+ALTER TABLE "activity_log" ADD COLUMN "patient_id" text;--> statement-breakpoint
+ALTER TABLE "activity_log" ADD CONSTRAINT "activity_log_patient_id_patients_id_fk" FOREIGN KEY ("patient_id") REFERENCES "public"."patients"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "activity_log_patient_created_at_idx" ON "activity_log" USING btree ("patient_id","created_at");
