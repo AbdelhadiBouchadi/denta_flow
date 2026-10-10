@@ -1,7 +1,11 @@
 import { differenceInYears, parseISO } from "date-fns";
 
 import { clinicNow } from "@/lib/time";
-import { MAX_PREGNANCY_WEEKS, MEDICAL_ALERT_LABELS } from "./constants";
+import {
+  MAX_PREGNANCY_WEEKS,
+  MEDICAL_ALERT_LABELS,
+  VISIT_APPOINTMENT_STATUS,
+} from "./constants";
 import { MedicalAlert, MedicalCondition, PaymentStatus } from "./types";
 
 /**
@@ -43,6 +47,28 @@ export const getPaymentStatus = ({
   if (remainingCents === 0) return PaymentStatus.Paid;
   if (amountPaidCents === 0) return PaymentStatus.Unpaid;
   return PaymentStatus.Partial;
+};
+
+/** A visit is a `completed` appointment — the rule in constants.ts. */
+export const isVisit = ({ status }: { status: string }) =>
+  status === VISIT_APPOINTMENT_STATUS;
+
+/**
+ * «Nombre de visites» and «Dernière visite» over a patient's appointments —
+ * the TS statement of what `patients.getOne` computes in SQL.
+ */
+export const summarizeVisits = (
+  appointments: readonly { status: string; startsAt: Date }[],
+) => {
+  const visits = appointments.filter(isVisit);
+  return {
+    visitCount: visits.length,
+    lastVisitAt: visits.reduce<Date | null>(
+      (latest, { startsAt }) =>
+        latest === null || startsAt > latest ? startsAt : latest,
+      null,
+    ),
+  };
 };
 
 /**

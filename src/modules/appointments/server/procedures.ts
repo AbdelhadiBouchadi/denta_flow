@@ -18,6 +18,7 @@ import {
 
 import { PRACTITIONER_ROLES } from "@/constants";
 import { db } from "@/database";
+import { hasMedicalAlert } from "@/database/sql/medical-alert";
 import {
   appointments,
   appointmentTypes,
@@ -70,6 +71,10 @@ import {
   appointmentListWhere,
   clinicDayOfStart,
 } from "./list-query";
+import {
+  UPCOMING_APPOINTMENT_STATUSES,
+  UPCOMING_APPOINTMENTS_LIMIT,
+} from "../upcoming";
 import { arrivedAtFor } from "../waiting-room";
 import { overlappingAppointment } from "./overlap";
 import { assertEditableBooking } from "./terminal-guard";
@@ -86,15 +91,23 @@ import { assertEditableBooking } from "./terminal-guard";
 // ── Reads ───────────────────────────────────────────────────────────────────
 
 /**
- * Every read nests the patient and the type as whole rows, so the agenda and
- * the list need no second query. The practitioner is a summary: the `user`
- * row also holds auth fields that have no business in a payload.
+ * Every read nests the type as a whole row, so the agenda and the list need
+ * no second query. The patient and the practitioner are summaries: the
+ * `patients` row holds the allergy text and the medical notes, which no list
+ * may carry (prompts/25) — a list gets the `hasMedicalAlert` boolean instead,
+ * computed in SQL. The `user` row holds auth fields for the same reason.
  */
 const selectAppointments = () =>
   db
     .select({
       ...getTableColumns(appointments),
-      patient: patients,
+      patient: {
+        id: patients.id,
+        shortCode: patients.shortCode,
+        firstName: patients.firstName,
+        lastName: patients.lastName,
+      },
+      hasMedicalAlert,
       type: appointmentTypes,
       practitioner: { id: user.id, name: user.name, color: user.color },
     })
@@ -369,6 +382,32 @@ export const appointmentsRouter = createTRPCRouter({
     }),
 
   /**
+   * The dossier header's «Prochains rendez-vous»: the patient's next
+   * `UPCOMING_APPOINTMENTS_LIMIT` non-terminal bookings that are not over yet
+   * (the definition in `upcoming.ts`), soonest first. Its own small read:
+   * `getManyByPatient` is newest-first and capped, so the next three would
+   * have to be filtered back out of a history page in the browser, against
+   * the browser's clock. Same row shape as every list, so a row opens the
+   * shared edit dialog as it is.
+   */
+  getUpcomingByPatient: protectedProcedure
+    .input(appointmentsByPatientSchema)
+    .query(async ({ input }) => {
+      const items = await selectAppointments()
+        .where(
+          and(
+            eq(appointments.patientId, input.patientId),
+            inArray(appointments.status, [...UPCOMING_APPOINTMENT_STATUSES]),
+            gt(appointments.endsAt, sql`NOW()`),
+          ),
+        )
+        .orderBy(asc(appointments.startsAt), asc(appointments.id))
+        .limit(UPCOMING_APPOINTMENTS_LIMIT);
+
+      return { items, total: items.length, totalPages: 1 };
+    }),
+
+  /**
    * «Salle d’attente»: today's arrived patients, longest wait first. No input
    * — «today» is the clinic day at the time of the call, so the navbar badge
    * left open past midnight empties on its next refetch.
@@ -386,8 +425,8 @@ export const appointmentsRouter = createTRPCRouter({
         arrivedAt: appointments.arrivedAt,
         startsAt: appointments.startsAt,
         count: sql<number>`(COUNT(*) OVER ())::int`,
-        // Non-empty allergies — the dossier header's «Alerte médicale».
-        hasMedicalAlert: sql<boolean>`COALESCE(btrim(${patients.allergies}) <> '', FALSE)`,
+        // The shared definition: allergies OR notes, never the text.
+        hasMedicalAlert,
         patient: {
           id: patients.id,
           firstName: patients.firstName,

@@ -1,5 +1,6 @@
 "use client";
 
+import MedicalAlertBadge from "@/components/shared/medical-alert-badge";
 import {
   Sheet,
   SheetContent,
@@ -7,6 +8,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { formatPatientName } from "@/modules/patients/derived";
 import { APPOINTMENT_COPY } from "../constants";
 import type { AppointmentGetMany } from "../types";
 import { AppointmentForm } from "./appointment-form";
@@ -74,6 +76,16 @@ export const CalendarDialogs = ({
             <SheetDescription>
               {APPOINTMENT_COPY.editDescription}
             </SheetDescription>
+            {/* Who is about to be treated, and whether to read the dossier
+                first — the boolean only, never the allergy text. */}
+            {editing && (
+              <p className="text-foreground flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                <span className="truncate">
+                  {formatPatientName(editing.patient)}
+                </span>
+                <MedicalAlertBadge compact active={editing.hasMedicalAlert} />
+              </p>
+            )}
           </SheetHeader>
           {editing && (
             <AppointmentForm

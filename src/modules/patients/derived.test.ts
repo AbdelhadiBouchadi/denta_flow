@@ -8,7 +8,10 @@ import {
   getPatientAge,
   getPaymentStatus,
   isMedicalCondition,
+  isVisit,
+  summarizeVisits,
 } from "./derived";
+import { AppointmentStatus } from "@/modules/appointments/types";
 import { MedicalAlert, PaymentStatus } from "./types";
 
 const status = (total: number, paid: number) =>
@@ -218,5 +221,49 @@ describe("isMedicalCondition", () => {
 
   it("skips a key that is not, or no longer, in the list", () => {
     expect(isMedicalCondition("scurvy")).toBe(false);
+  });
+});
+
+describe("isVisit — «Nombre de visites» / «Dernière visite»", () => {
+  it("counts a completed appointment as a visit", () => {
+    expect(isVisit({ status: AppointmentStatus.Completed })).toBe(true);
+  });
+
+  it.each([
+    AppointmentStatus.Planned,
+    AppointmentStatus.Confirmed,
+    AppointmentStatus.Arrived,
+    AppointmentStatus.Canceled,
+    AppointmentStatus.NoShow,
+  ])("never counts %s", (status) => {
+    expect(isVisit({ status })).toBe(false);
+  });
+});
+
+describe("summarizeVisits", () => {
+  const row = (status: AppointmentStatus, iso: string) => ({
+    status,
+    startsAt: new Date(iso),
+  });
+
+  it("has no visit and no date for a patient never seen", () => {
+    expect(summarizeVisits([])).toEqual({ visitCount: 0, lastVisitAt: null });
+  });
+
+  it("counts completed only, and dates the latest of them", () => {
+    expect(
+      summarizeVisits([
+        row(AppointmentStatus.Completed, "2026-03-02T09:00:00Z"),
+        // A past booking never closed is not a visit, however recent.
+        row(AppointmentStatus.Confirmed, "2026-09-30T09:00:00Z"),
+        row(AppointmentStatus.NoShow, "2026-09-15T09:00:00Z"),
+        row(AppointmentStatus.Completed, "2026-06-10T14:30:00Z"),
+        row(AppointmentStatus.Arrived, "2026-10-09T08:00:00Z"),
+        row(AppointmentStatus.Canceled, "2026-08-01T09:00:00Z"),
+      ]),
+    ).toEqual({
+      visitCount: 2,
+      lastVisitAt: new Date("2026-06-10T14:30:00Z"),
+    });
   });
 });

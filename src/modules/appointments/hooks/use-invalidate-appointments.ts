@@ -30,8 +30,10 @@ export const useInvalidateAppointments = () => {
   return useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries(trpc.appointments.pathFilter()),
-      queryClient.invalidateQueries(trpc.patients.getMany.queryFilter()),
-      queryClient.invalidateQueries(trpc.patients.getOne.queryFilter()),
+      // Router-wide: the dossier header's «Dernière visite» / «Nombre de
+      // visites» (a booking closed as completed) and the list's «Prochain
+      // rendez-vous» — and any patients read added later.
+      queryClient.invalidateQueries(trpc.patients.pathFilter()),
       queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
     ]);
   }, [queryClient, trpc]);

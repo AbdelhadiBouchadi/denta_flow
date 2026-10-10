@@ -244,7 +244,6 @@ export const WAITING_ROOM_COPY = {
   retry: "Réessayer",
   complete: "Terminer",
   completeLabel: "Terminer le rendez-vous de",
-  medicalAlert: "Alerte médicale",
   appointmentAt: "RDV à",
 } as const;
 

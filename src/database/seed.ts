@@ -1155,6 +1155,55 @@ async function main() {
     }
   }
 
+  // «Alerte médicale» (prompts/25): whatever the dice gave, a few dossiers
+  // carry one on purpose — one patient waiting in the salle d'attente, one
+  // booked later today, two more on the list, and one with notes but no
+  // allergy (the alert reads either field). Set here, before the dossiers
+  // médicaux are derived from the notes below, so the two never disagree.
+  // No `rand()` is drawn: every later draw of the seed is unchanged.
+  const ANTICOAGULANT_NOTE = MEDICAL_NOTES[2];
+  const DIABETES_NOTE = MEDICAL_NOTES[0];
+  const alertPatientById = new Map(patientRows.map((p) => [p.id, p]));
+  const isTodayRow = (a: NewAppointment) =>
+    a.startsAt >= todayStart && a.startsAt < tomorrowStart;
+  const waitingPatient = appointmentRows.find(
+    (a) => isTodayRow(a) && a.status === "arrived",
+  )?.patientId;
+  const laterTodayPatient = appointmentRows.find(
+    (a) =>
+      isTodayRow(a) &&
+      a.startsAt > now &&
+      (a.status === "planned" || a.status === "confirmed") &&
+      a.patientId !== waitingPatient,
+  )?.patientId;
+  const alertPlan: [allergies: string | null, notes: string | null][] = [
+    ["Pénicilline", ANTICOAGULANT_NOTE],
+    ["Latex", DIABETES_NOTE],
+    ["Pénicilline, latex", null],
+    ["Iode", "Hypertension artérielle traitée."],
+    [null, "Asthme, porte un inhalateur."],
+  ];
+  const alertTargets = [waitingPatient, laterTodayPatient]
+    .filter((id): id is string => id !== undefined)
+    .map((id) => alertPatientById.get(id)!);
+  for (const p of activePatients) {
+    if (alertTargets.length >= alertPlan.length) break;
+    if (!childIds.has(p.id) && !alertTargets.includes(p)) alertTargets.push(p);
+  }
+  alertTargets.forEach((p, index) => {
+    const [allergies, notes] = alertPlan[index];
+    p.allergies = allergies;
+    p.medicalNotes = notes;
+  });
+  const hasText = (value: string | null | undefined) => !!value?.trim();
+  if (
+    patientRows.filter((p) => hasText(p.allergies)).length < 4 ||
+    !waitingPatient ||
+    !hasText(alertPatientById.get(waitingPatient)!.allergies)
+  ) {
+    throw new Error("Seed: les alertes médicales attendues sont incomplètes");
+  }
+
   // Treatments — 2–6 per active patient, label + price snapshotted from the service.
   const completedByPatient = new Map<string, NewAppointment[]>();
   for (const a of appointmentRows) {
@@ -2184,6 +2233,12 @@ async function main() {
   // Ids only — open each at /patients/<id>?tab=medical_history to check its pill.
   const flagged = (holds: (h: NewMedicalHistory) => boolean) =>
     medicalHistoryRows.filter(holds).map((h) => h.patientId);
+  // Ids only, never the text (08-clinical.md §6).
+  console.log("Alertes médicales du dossier (ids) :", {
+    salleDAttente: waitingPatient,
+    plusTardAujourdHui: laterTodayPatient ?? null,
+    autres: alertTargets.slice(2).map((p) => p.id),
+  });
   console.log("Dossiers médicaux à alertes (ids) :", {
     anticoagulants: flagged((h) => !!h.onAnticoagulants),
     bisphosphonates: flagged((h) => !!h.onBisphosphonates),

@@ -1,7 +1,13 @@
 "use client";
 
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { PlusIcon, SearchIcon } from "lucide-react";
+import {
+  FilePlusIcon,
+  FileSignatureIcon,
+  HistoryIcon,
+  PlusIcon,
+  SearchIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import EmptyState from "@/components/shared/empty-state";
@@ -14,6 +20,17 @@ import {
 } from "@/components/ui/input-group";
 import { formatDate, formatDH } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  DOCUMENT_COPY,
+  DOCUMENT_TYPE_LABELS,
+} from "@/modules/documents/constants";
+import {
+  DocumentType,
+  type GeneratedDocumentType,
+} from "@/modules/documents/types";
+import GenerateDocumentDialog, {
+  useEligibleActes,
+} from "@/modules/documents/ui/generate-document-dialog";
 import {
   TREATMENT_COLUMN_HEADERS as H,
   TREATMENT_COPY,
@@ -31,8 +48,18 @@ import TreatmentActions from "@/modules/treatments/ui/treatment-actions";
 import { TreatmentLabel } from "@/modules/treatments/ui/treatment-label";
 import { matchesTreatmentSearch } from "@/modules/treatments/search";
 import { useTRPC } from "@/trpc/client";
-import type { PatientGetOne } from "../types";
+import { usePatientTab } from "../hooks/use-patient-tab";
+import { PatientTab, type PatientGetOne } from "../types";
 import BalanceStrip from "./balance-strip";
+import GenerateDocumentButton from "./generate-document-button";
+
+/** The toolbar's document shortcuts — the reference's buttons under the actes. */
+const COPY = {
+  /** «Devis (2)»: the patient's documents of that type, removed ones excluded. */
+  shortcut: (type: GeneratedDocumentType, count: number) =>
+    `${DOCUMENT_TYPE_LABELS[type]} (${count})`,
+  history: "Historique des documents",
+} as const;
 
 interface PatientTreatmentsProps {
   patient: PatientGetOne;
@@ -41,7 +68,11 @@ interface PatientTreatmentsProps {
 /**
  * The dossier's «Actes» tab — the reference layout without the chart (the
  * odontogram is V1.1): toolbar, the list, and the balance strip at the
- * bottom. Actes come from `treatments.getManyByPatient` (prefetched by the
+ * bottom. The toolbar carries the document shortcuts: «Devis (N)» and
+ * «Facture (N)» open branch 21's generate dialog — disabled, with the reason,
+ * when no acte is eligible — and «Historique des documents» switches to the
+ * «Documents» tab. N comes from `documents.countByPatient`, one grouped SQL
+ * count, refreshed by the documents invalidation on every generate / remove. Actes come from `treatments.getManyByPatient` (prefetched by the
  * dossier page); the strip's figures from `patients.getOne`, the real
  * balance, derived in SQL.
  */
@@ -50,9 +81,19 @@ const PatientTreatments = ({ patient }: PatientTreatmentsProps) => {
   const { data } = useSuspenseQuery(
     trpc.treatments.getManyByPatient.queryOptions({ patientId: patient.id }),
   );
+  const { data: documentCounts } = useSuspenseQuery(
+    trpc.documents.countByPatient.queryOptions({ patientId: patient.id }),
+  );
+  // The shared eligibility rule — the same the dialog itself lists.
+  const planned = useEligibleActes(patient.id, DocumentType.Quote);
+  const billable = useEligibleActes(patient.id, DocumentType.Invoice);
   const [search, setSearch] = useTreatmentSearch();
+  const [, setTab] = usePatientTab();
   // Dialog state, not page state.
   const [isCreating, setIsCreating] = useState(false);
+  const [generating, setGenerating] = useState<GeneratedDocumentType | null>(
+    null,
+  );
 
   const items = data.items.filter((item) =>
     matchesTreatmentSearch(item, search),
@@ -60,9 +101,9 @@ const PatientTreatments = ({ patient }: PatientTreatmentsProps) => {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* The right-hand group leaves room for the Devis / Facture buttons
-          of branch 21. */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      {/* `items-start`: a disabled shortcut carries its reason beneath it,
+          and the other controls stay aligned on the button row. */}
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
         <InputGroup className="h-9 w-full max-w-sm">
           <InputGroupAddon>
             <SearchIcon />
@@ -75,7 +116,35 @@ const PatientTreatments = ({ patient }: PatientTreatmentsProps) => {
             onChange={(event) => void setSearch(event.target.value)}
           />
         </InputGroup>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-start gap-2">
+          <GenerateDocumentButton
+            variant="outline"
+            icon={<FilePlusIcon />}
+            label={COPY.shortcut(
+              DocumentType.Quote,
+              documentCounts[DocumentType.Quote],
+            )}
+            reason={planned.length === 0 ? DOCUMENT_COPY.noPlanned : null}
+            onClick={() => setGenerating(DocumentType.Quote)}
+          />
+          <GenerateDocumentButton
+            variant="outline"
+            icon={<FileSignatureIcon />}
+            label={COPY.shortcut(
+              DocumentType.Invoice,
+              documentCounts[DocumentType.Invoice],
+            )}
+            reason={billable.length === 0 ? DOCUMENT_COPY.noBillable : null}
+            onClick={() => setGenerating(DocumentType.Invoice)}
+          />
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={() => void setTab(PatientTab.Documents)}
+          >
+            <HistoryIcon />
+            {COPY.history}
+          </Button>
           <Button size="lg" onClick={() => setIsCreating(true)}>
             <PlusIcon />
             {TREATMENT_COPY.newButton}
@@ -133,6 +202,18 @@ const PatientTreatments = ({ patient }: PatientTreatmentsProps) => {
         defaultValues={{ patient }}
         lockPatient
       />
+
+      {/* Mounted while open only: each opening starts from «all selected». */}
+      {generating && (
+        <GenerateDocumentDialog
+          type={generating}
+          patientId={patient.id}
+          open
+          onOpenChange={(open) => {
+            if (!open) setGenerating(null);
+          }}
+        />
+      )}
     </div>
   );
 };

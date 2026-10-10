@@ -6,6 +6,7 @@ import {
   ArchiveRestoreIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  PlusIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -22,11 +23,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/hooks/use-confirm";
 import { authClient } from "@/lib/auth-client";
+import NewAppointmentDialog from "@/modules/appointments/ui/new-appointment-dialog";
 import { ADMIN_ROLE } from "@/modules/dashboard/constants";
+import NewPaymentDialog from "@/modules/payments/ui/new-payment-dialog";
 import { useTRPC } from "@/trpc/client";
 import { useInvalidatePatients } from "../hooks/use-invalidate-patients";
 import type { PatientGetOne } from "../types";
 import UpdatePatientDialog from "./update-patient-dialog";
+
+/** The header's quick actions — the reference's «+ Paiement», «+ Rendez-vous». */
+const COPY = {
+  payment: "Paiement",
+  appointment: "Rendez-vous",
+  /** The same actions, spelled out, inside the overflow menu on a phone. */
+  newPayment: "Nouveau paiement",
+  newAppointment: "Nouveau rendez-vous",
+} as const;
 
 interface PatientActionsProps {
   patient: PatientGetOne;
@@ -37,15 +49,24 @@ interface PatientActionsProps {
  * Archiving is the everyday action; the hard delete is an admin's, and the list
  * rows carry neither (08-clinical.md §6).
  *
- * «+ Paiement» and «+ Rendez-vous» from the reference are deliberately absent:
- * those slices do not exist yet, and a button that cannot do anything is worse
- * than a missing one.
+ * «+ Paiement» and «+ Rendez-vous» open the payments and appointments slices’
+ * OWN dialogs, patient locked — reused, never forked — so each keeps its own
+ * rules and its own invalidation (both refresh `patients.pathFilter()`, so
+ * the header's balance and counters move without a reload). Neither is
+ * disabled for an archived patient: payments accept one by rule (branch 20),
+ * and appointments has no archived rule at all; this branch changes neither.
+ *
+ * Below `sm` the two buttons collapse into the overflow menu: «Modifier» and
+ * the menu are all that fit beside the header on a 360 px phone.
  */
 const PatientActions = ({ patient }: PatientActionsProps) => {
   const trpc = useTRPC();
   const router = useRouter();
   const invalidateAll = useInvalidatePatients();
   const [isEditOpen, setIsEditOpen] = useState(false);
+  // Dialog state, not page state.
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [isAppointmentOpen, setIsAppointmentOpen] = useState(false);
 
   // Cosmetic only. `patients.remove` is an adminProcedure and refuses a
   // non-admin whatever this menu shows (AGENTS.md §2).
@@ -129,8 +150,20 @@ const PatientActions = ({ patient }: PatientActionsProps) => {
         onOpenChange={setIsEditOpen}
         initialValues={patient}
       />
+      <NewPaymentDialog
+        open={isPaymentOpen}
+        onOpenChange={setIsPaymentOpen}
+        defaultValues={{ patient }}
+        lockPatient
+      />
+      <NewAppointmentDialog
+        open={isAppointmentOpen}
+        onOpenChange={setIsAppointmentOpen}
+        defaultValues={{ patient }}
+        lockPatient
+      />
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <Button
           variant="outline"
           size="lg"
@@ -139,6 +172,27 @@ const PatientActions = ({ patient }: PatientActionsProps) => {
         >
           <PencilIcon />
           Modifier
+        </Button>
+
+        <Button
+          variant="outline"
+          size="lg"
+          className="hidden sm:inline-flex"
+          disabled={isPending}
+          onClick={() => setIsPaymentOpen(true)}
+        >
+          <PlusIcon />
+          {COPY.payment}
+        </Button>
+
+        <Button
+          size="lg"
+          className="hidden sm:inline-flex"
+          disabled={isPending}
+          onClick={() => setIsAppointmentOpen(true)}
+        >
+          <PlusIcon />
+          {COPY.appointment}
         </Button>
 
         <DropdownMenu>
@@ -156,6 +210,23 @@ const PatientActions = ({ patient }: PatientActionsProps) => {
           </DropdownMenuTrigger>
 
           <DropdownMenuContent align="end" className="w-60">
+            {/* Phone only: the quick actions the header has no room for. */}
+            <DropdownMenuItem
+              className="sm:hidden"
+              onClick={() => setIsPaymentOpen(true)}
+            >
+              <PlusIcon />
+              {COPY.newPayment}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="sm:hidden"
+              onClick={() => setIsAppointmentOpen(true)}
+            >
+              <PlusIcon />
+              {COPY.newAppointment}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="sm:hidden" />
+
             <DropdownMenuItem onClick={handleArchive}>
               {patient.isArchived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
               {patient.isArchived ? "Réactiver" : "Archiver"}

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import type { StatusTone } from "@/components/shared/status-badge";
+import { AppointmentStatus } from "@/modules/appointments/types";
 import {
   BloodType,
   Gender,
@@ -84,6 +85,26 @@ export const PATIENT_TAB_VALUES = [
 ] as const;
 
 export const DEFAULT_PATIENT_TAB = PatientTab.Informations;
+
+// ── The dossier header's three counters (prompts/25) ─────────────────────────
+//
+// «Reste à payer» — `remainingCents` from `patients.getOne`: billable actes
+//   (src/database/sql/billable.ts) minus every payment, derived in SQL, never
+//   clamped. Negative ⇒ the tile reads «Avance» through `describeBalance`.
+// «Dernière visite» — the latest `startsAt` among the patient's VISITS, shown
+//   as a date and time on the clinic's wall clock; «Aucune» when there is none.
+// «Nombre de visites» — how many VISITS the patient has.
+//
+// A VISIT is an appointment whose status is `completed` — the patient came and
+// was seen. Not `arrived` (still in the waiting room), not a past `planned` /
+// `confirmed` that was never closed, never `canceled` or `no_show`. Both
+// figures are computed in SQL in `patients.getOne` from this constant; the
+// predicate `isVisit` (derived.ts) states the same rule for the tests.
+
+export const VISIT_APPOINTMENT_STATUS = AppointmentStatus.Completed;
+
+/** «Dernière visite» for a patient never seen. */
+export const NO_VISIT_LABEL = "Aucune";
 
 /** Shown wherever a patient has no insurer (06-ui.md §4, «Couverture»). */
 export const NO_INSURER_LABEL = "Sans couverture";

@@ -12,7 +12,6 @@ import {
   gte,
   ilike,
   inArray,
-  lt,
   max,
   min,
   or,
@@ -51,6 +50,7 @@ import {
   createTRPCRouter,
   protectedProcedure,
 } from "@/trpc/init";
+import { VISIT_APPOINTMENT_STATUS } from "../constants";
 import {
   medicalHistoryUpsertSchema,
   patientInsertSchema,
@@ -98,9 +98,9 @@ export const amountPaidCents = sql<number>`COALESCE(${db
 export const remainingCents = sql<number>`(${totalAmountCents} - ${amountPaidCents})::int`;
 
 /**
- * An appointment that counts as the patient having been seen, or being
- * expected. `canceled` never happened; `no_show` is the appointment the
- * patient did not turn up to, which is the definition of not a visit.
+ * An appointment the patient is still expected at — «Prochain rendez-vous»
+ * on the list. `canceled` and `no_show` hold no slot. (The visit counters
+ * have their own, stricter rule: `visitByPatient` below.)
  */
 const ATTENDED_APPOINTMENT_STATUSES: (typeof appointments.$inferSelect)["status"][] =
   ["planned", "confirmed", "arrived", "completed"];
@@ -118,19 +118,27 @@ const nextAppointmentAt: SQL<Date | null> = sql`${db
   appointments.startsAt,
 );
 
-/** The last time the patient actually came in. `null` for a new dossier. */
+/**
+ * A visit: an appointment closed as `completed` (the definition and its
+ * reasons are in constants.ts). No time bound — a completed booking is by
+ * nature one the patient attended.
+ */
+const visitByPatient = and(
+  eq(appointments.patientId, patients.id),
+  eq(appointments.status, VISIT_APPOINTMENT_STATUS),
+);
+
+/** «Dernière visite». `null` for a patient never seen. */
 const lastVisitAt: SQL<Date | null> = sql`${db
   .select({ value: max(appointments.startsAt) })
   .from(appointments)
-  .where(and(attendedByPatient, lt(appointments.startsAt, sql`NOW()`)))}`.mapWith(
-  appointments.startsAt,
-);
+  .where(visitByPatient)}`.mapWith(appointments.startsAt);
 
-/** «Nombre de visites» — the same predicate as the last visit, counted. */
+/** «Nombre de visites» — the same predicate, counted. */
 const visitCount = sql<number>`COALESCE(${db
   .select({ value: count() })
   .from(appointments)
-  .where(and(attendedByPatient, lt(appointments.startsAt, sql`NOW()`)))}, 0)::int`;
+  .where(visitByPatient)}, 0)::int`;
 
 /** The patient's tags, whole rows, so the pill needs no second query. */
 type PatientTagSummary = Pick<

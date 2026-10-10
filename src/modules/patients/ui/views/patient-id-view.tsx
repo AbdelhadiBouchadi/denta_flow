@@ -1,6 +1,7 @@
 "use client";
 
 import { useSuspenseQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import ErrorState from "@/components/shared/error-state";
 import LoadingState from "@/components/shared/loading-state";
@@ -28,13 +29,32 @@ interface PatientIdViewProps {
 const PatientIdView = ({ patientId }: PatientIdViewProps) => {
   const trpc = useTRPC();
   const [tab, setTab] = usePatientTab();
+  const tabScrollerRef = useRef<HTMLDivElement>(null);
+
+  // On a phone the tab list scrolls inside its own box, so the open tab — a
+  // deep link to «Documents», or the «Historique des documents» shortcut —
+  // can sit off-screen. Centre it horizontally on the SCROLLER only:
+  // `scrollIntoView` would also scroll the page vertically to reach it. A DOM
+  // sync after render, not data: an effect is the right tool.
+  useEffect(() => {
+    const scroller = tabScrollerRef.current;
+    const active = scroller?.querySelector<HTMLElement>(
+      '[role="tab"][data-active]',
+    );
+    if (!scroller || !active) return;
+
+    const box = scroller.getBoundingClientRect();
+    const target = active.getBoundingClientRect();
+    const offset = target.left - box.left - (box.width - target.width) / 2;
+    scroller.scrollBy({ left: offset, behavior: "smooth" });
+  }, [tab]);
 
   const { data: patient } = useSuspenseQuery(
     trpc.patients.getOne.queryOptions({ id: patientId }),
   );
 
   return (
-    <div className="flex flex-1 flex-col gap-4 px-4 py-6 md:px-8">
+    <div className="flex min-w-0 flex-1 flex-col gap-4 px-4 py-6 md:px-8">
       <PatientBreadcrumb patientName={formatPatientName(patient)} />
 
       <PatientDossierHeader patient={patient} />
@@ -43,7 +63,7 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
           would otherwise mean nine session reads for one record. The list and
           the panels share one Card so the active tab reads as the top edge of
           the content it opens, not as a separate grey band above it. */}
-      <Card className="gap-0 py-0">
+      <Card className="min-w-0 gap-0 py-0">
         <Tabs
           value={tab}
           onValueChange={(value) => void setTab(value as PatientTab)}
@@ -62,7 +82,10 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
               that attribute, not on Radix's `data-[state=active]`, which never
               matches here. The line variant's own `after:` underline is
               switched off so there is exactly one active indicator. */}
-          <div className="[scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden">
+          <div
+            ref={tabScrollerRef}
+            className="[scrollbar-width:none] min-w-0 overflow-x-auto [&::-webkit-scrollbar]:hidden"
+          >
             <TabsList
               variant="line"
               className="w-max min-w-full justify-start rounded-none border-b bg-transparent p-0 px-4 group-data-horizontal/tabs:h-auto md:px-6"
