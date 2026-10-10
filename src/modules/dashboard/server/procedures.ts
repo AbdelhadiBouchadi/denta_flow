@@ -3,6 +3,7 @@ import "server-only";
 import { asc, count, desc, eq, gt, sql } from "drizzle-orm";
 
 import { db } from "@/database";
+import { hasMedicalAlert } from "@/database/sql/medical-alert";
 import {
   appointments,
   appointmentTypes,
@@ -89,6 +90,8 @@ export const dashboardRouter = createTRPCRouter({
           status: appointments.status,
           durationMinutes,
           isLate: sql<boolean>`COALESCE(${isLate(lateBefore)}, FALSE)`,
+          // The boolean only — the allergy text stays in the dossier.
+          hasMedicalAlert,
           patient: {
             id: patients.id,
             firstName: patients.firstName,

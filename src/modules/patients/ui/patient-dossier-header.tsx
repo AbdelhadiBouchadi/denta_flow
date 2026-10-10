@@ -11,14 +11,15 @@ import {
   MailIcon,
   PhoneIcon,
   ShieldIcon,
-  TriangleAlertIcon,
   VenusAndMarsIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Suspense, useState, type ReactNode } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { toast } from "sonner";
 
 import GeneratedAvatar from "@/components/shared/generated-avatar";
+import MedicalAlertBadge from "@/components/shared/medical-alert-badge";
 import StatusBadge from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,7 +30,11 @@ import {
   formatPhone,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { GENDER_LABELS, NO_INSURER_LABEL } from "../constants";
+import {
+  GENDER_LABELS,
+  NO_INSURER_LABEL,
+  NO_VISIT_LABEL,
+} from "../constants";
 import {
   formatPatientName,
   getPatientAge,
@@ -39,6 +44,10 @@ import { PaymentStatus, type Gender, type PatientGetOne } from "../types";
 import MedicalAlertPills from "./medical-alert-pills";
 import PatientActions from "./patient-actions";
 import { PatientTags } from "./patient-tags";
+import PatientUpcomingAppointments, {
+  PatientUpcomingAppointmentsError,
+  PatientUpcomingAppointmentsLoading,
+} from "./patient-upcoming-appointments";
 import { PaymentAmount } from "./payment-amount";
 
 interface PatientDossierHeaderProps {
@@ -198,8 +207,10 @@ const PatientDossierHeader = ({ patient }: PatientDossierHeaderProps) => {
 
   return (
     <Card className="p-4 md:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start">
+      {/* `min-w-0` on every flex ancestor of the upcoming strip, which
+          scrolls sideways inside its own box on a phone. */}
+      <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start lg:flex-1">
           <div className="flex shrink-0 flex-col items-center gap-2">
             <GeneratedAvatar
               seed={patient.id}
@@ -218,25 +229,14 @@ const PatientDossierHeader = ({ patient }: PatientDossierHeaderProps) => {
               </h1>
               <PatientTags tags={patient.tags} max={patient.tags.length || 1} />
 
-              {/* The allergy stays on the name row, spelled out rather than
-                  hidden behind an icon: it is the one fact that must be read
-                  before anyone touches the patient
-                  (prompt_material/10-patient-dossier.md). */}
-              {patient.allergies && (
-                <span
-                  role="alert"
-                  title={`Alerte médicale · ${patient.allergies}`}
-                  className="border-danger/30 bg-danger-subtle text-danger-strong text-label inline-flex max-w-xs min-w-0 items-center gap-1.5 rounded-md border px-2 py-1"
-                >
-                  <TriangleAlertIcon
-                    aria-hidden="true"
-                    className="size-3.5 shrink-0"
-                  />
-                  <span className="truncate">
-                    Alerte médicale · {patient.allergies}
-                  </span>
-                </span>
-              )}
+              {/* Allergies or medical notes: one pill on the name row, the
+                  first thing read before anyone touches the patient. Hover or
+                  tap opens the full text — it never truncates here. The same
+                  rule, in SQL, puts the compact icon on every list. */}
+              <MedicalAlertBadge
+                allergies={patient.allergies}
+                medicalNotes={patient.medicalNotes}
+              />
 
               {/* The critical flags of the dossier médical, the same red as the
                   allergy and right beside it: each changes what may safely be
@@ -305,7 +305,7 @@ const PatientDossierHeader = ({ patient }: PatientDossierHeaderProps) => {
                     formatDateTime(patient.lastVisitAt)
                   ) : (
                     <span className="text-muted-foreground font-normal">
-                      {UNKNOWN}
+                      {NO_VISIT_LABEL}
                     </span>
                   )
                 }
@@ -321,7 +321,23 @@ const PatientDossierHeader = ({ patient }: PatientDossierHeaderProps) => {
           </div>
         </div>
 
-        <PatientActions patient={patient} />
+        {/* The reference's right column: the actions, then the next
+            appointments under them. Full width on a phone. */}
+        <div className="flex min-w-0 flex-col gap-4 lg:w-80 lg:shrink-0 lg:items-end">
+          <PatientActions patient={patient} />
+          {/* Its own boundaries: a failed or slow `getUpcomingByPatient`
+              stays in this box, and the dossier, «Modifier» and the quick
+              actions above it keep working. `resetKeys` re-arms it when the
+              route moves to another patient. */}
+          <ErrorBoundary
+            FallbackComponent={PatientUpcomingAppointmentsError}
+            resetKeys={[patient.id]}
+          >
+            <Suspense fallback={<PatientUpcomingAppointmentsLoading />}>
+              <PatientUpcomingAppointments patientId={patient.id} />
+            </Suspense>
+          </ErrorBoundary>
+        </div>
       </div>
     </Card>
   );

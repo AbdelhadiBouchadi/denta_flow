@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { ArrowRightIcon } from "lucide-react";
 
 import EmptyState from "@/components/shared/empty-state";
+import MedicalAlertBadge from "@/components/shared/medical-alert-badge";
 import StatusBadge from "@/components/shared/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -85,6 +86,7 @@ const AgendaRow = ({ appointment }: { appointment: DashboardAppointment }) => {
           >
             {patient.name}
           </Link>
+          <MedicalAlertBadge compact active={appointment.hasMedicalAlert} />
           <span className="bg-muted text-muted-foreground rounded-md px-1.5 py-0.5 font-mono text-xs tracking-wider">
             {patient.shortCode}
           </span>

@@ -2,6 +2,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type { CSSProperties } from "react";
 
 import type { DataTableFeatures } from "@/components/shared/data-table";
+import MedicalAlertBadge from "@/components/shared/medical-alert-badge";
 import StatusBadge from "@/components/shared/status-badge";
 import { formatTime } from "@/lib/format";
 import { formatPatientName } from "@/modules/patients/derived";
@@ -53,6 +54,7 @@ export const columns: ColumnDef<DataTableFeatures, AppointmentListItem>[] = [
         <span className="text-foreground font-medium">
           {formatPatientName(row.original.patient)}
         </span>
+        <MedicalAlertBadge compact active={row.original.hasMedicalAlert} />
       </span>
     ),
   },

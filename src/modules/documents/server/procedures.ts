@@ -479,6 +479,34 @@ export const documentsRouter = createTRPCRouter({
       return { items, total: totals.count, totalPages: 1 };
     }),
 
+  /**
+   * The «Devis (N)» / «Facture (N)» shortcuts of the dossier's «Actes» tab:
+   * the patient's live documents, counted per type in ONE grouped statement.
+   * Every generated type is present, zero included, so the buttons never read
+   * a missing key. Removed (retired) documents are not counted — they are out
+   * of every list too.
+   */
+  countByPatient: protectedProcedure
+    .input(documentsByPatientSchema)
+    .query(async ({ input }) => {
+      const rows = await db
+        .select({ type: documents.type, count: count() })
+        .from(documents)
+        .where(and(eq(documents.patientId, input.patientId), isLiveDocument))
+        .groupBy(documents.type);
+
+      const counts: Record<GeneratedDocumentType, number> = {
+        [DocumentType.Invoice]: 0,
+        [DocumentType.Quote]: 0,
+      };
+      for (const row of rows) {
+        if (row.type === DocumentType.Invoice || row.type === DocumentType.Quote) {
+          counts[row.type] = row.count;
+        }
+      }
+      return counts;
+    }),
+
   /** Billable actes only; the account situation frozen with it. */
   generateInvoice: protectedProcedure
     .input(generateInvoiceSchema)

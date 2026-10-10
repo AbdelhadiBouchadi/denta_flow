@@ -3,16 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState, type CSSProperties } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { CheckIcon, ClockIcon, TriangleAlertIcon } from "lucide-react";
+import { CheckIcon, ClockIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import MedicalAlertBadge from "@/components/shared/medical-alert-badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { getErrorMessage } from "@/lib/errors";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -153,22 +149,7 @@ const WaitingRoomRow = ({ item, now, onNavigate }: WaitingRoomRowProps) => {
           >
             {patient.name}
           </Link>
-          {item.hasMedicalAlert && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    tabIndex={0}
-                    aria-label={COPY.medicalAlert}
-                    className="text-destructive inline-flex shrink-0"
-                  />
-                }
-              >
-                <TriangleAlertIcon className="size-3.5" aria-hidden="true" />
-              </TooltipTrigger>
-              <TooltipContent>{COPY.medicalAlert}</TooltipContent>
-            </Tooltip>
-          )}
+          <MedicalAlertBadge compact active={item.hasMedicalAlert} />
           <span className="bg-muted text-muted-foreground shrink-0 rounded-md px-1.5 py-0.5 font-mono text-xs tracking-wider">
             {patient.shortCode}
           </span>

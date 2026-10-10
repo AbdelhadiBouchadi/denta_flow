@@ -31,5 +31,9 @@ export const useInvalidatePatients = () => {
     // with it — every figure there can move. Archiving moves none (an
     // archived patient's debt still counts), but the hook is shared.
     await queryClient.invalidateQueries(trpc.dashboard.pathFilter());
+    // Every appointment list carries the patient's name and the
+    // `hasMedicalAlert` boolean: an allergy added in «Modifier» must reach the
+    // agenda sheet, `/rendez-vous` and the waiting room without a reload.
+    await queryClient.invalidateQueries(trpc.appointments.pathFilter());
   }, [queryClient, trpc]);
 };

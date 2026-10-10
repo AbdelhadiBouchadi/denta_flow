@@ -5,7 +5,6 @@ import { FilePlusIcon, FileSignatureIcon } from "lucide-react";
 import { useState } from "react";
 
 import EmptyState from "@/components/shared/empty-state";
-import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/lib/format";
 import {
   DOCUMENT_COLUMN_HEADERS as H,
@@ -23,6 +22,7 @@ import GenerateDocumentDialog, {
 } from "@/modules/documents/ui/generate-document-dialog";
 import { useTRPC } from "@/trpc/client";
 import type { PatientGetOne } from "../types";
+import GenerateDocumentButton from "./generate-document-button";
 
 interface PatientDocumentsProps {
   patient: PatientGetOne;
@@ -53,14 +53,14 @@ const PatientDocuments = ({ patient }: PatientDocumentsProps) => {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-end gap-3">
-        <GenerateButton
+        <GenerateDocumentButton
           icon={<FilePlusIcon />}
           label={DOCUMENT_COPY.generateQuote}
           reason={planned.length === 0 ? DOCUMENT_COPY.noPlanned : null}
           variant="outline"
           onClick={() => setGenerating(DocumentType.Quote)}
         />
-        <GenerateButton
+        <GenerateDocumentButton
           icon={<FileSignatureIcon />}
           label={DOCUMENT_COPY.generateInvoice}
           reason={billable.length === 0 ? DOCUMENT_COPY.noBillable : null}
@@ -118,29 +118,6 @@ const PatientDocuments = ({ patient }: PatientDocumentsProps) => {
     </div>
   );
 };
-
-const GenerateButton = ({
-  icon,
-  label,
-  reason,
-  variant = "default",
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  /** Why the button is disabled; null ⇒ enabled. */
-  reason: string | null;
-  variant?: "default" | "outline";
-  onClick: () => void;
-}) => (
-  <div className="flex flex-col items-end gap-1">
-    <Button size="lg" variant={variant} disabled={reason !== null} onClick={onClick}>
-      {icon}
-      {label}
-    </Button>
-    {reason && <span className="text-muted-foreground text-xs">{reason}</span>}
-  </div>
-);
 
 const DocumentRow = ({ item }: { item: DocumentListItem }) => (
   <div

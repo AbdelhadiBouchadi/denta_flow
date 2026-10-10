@@ -39,6 +39,10 @@ const PatientIdPage = async ({ params }: Props) => {
   void queryClient.prefetchQuery(
     trpc.appointments.getManyByPatient.queryOptions({ patientId }),
   );
+  // The header's «Prochains rendez-vous», rendered whatever the tab.
+  void queryClient.prefetchQuery(
+    trpc.appointments.getUpcomingByPatient.queryOptions({ patientId }),
+  );
   // The «Actes» tab, for the same reason.
   void queryClient.prefetchQuery(
     trpc.treatments.getManyByPatient.queryOptions({ patientId }),
@@ -51,6 +55,10 @@ const PatientIdPage = async ({ params }: Props) => {
   // «Actes» query above.
   void queryClient.prefetchQuery(
     trpc.documents.getManyByPatient.queryOptions({ patientId }),
+  );
+  // The «Actes» toolbar's «Devis (N)» / «Facture (N)».
+  void queryClient.prefetchQuery(
+    trpc.documents.countByPatient.queryOptions({ patientId }),
   );
   // Read by the edit dialog's form, which the header can open at any moment.
   void queryClient.prefetchQuery(trpc.tags.getMany.queryOptions());
