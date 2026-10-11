@@ -255,6 +255,69 @@
   --sidebar-ring: var(--teal);
 }
 
+/*
+ * Odontogramme — react-advanced-odontogram. The ONE block where the chart's
+ * colours are set. Its stylesheet is scoped to `.odontogram-root` at build
+ * time (scripts/postcss-scope-odontogram.mjs) and reads its palette from
+ * these `--odon-*` variables, which follow our tokens in light and dark.
+ * Resolved on <html>, so `--odon-line: var(--line)` is our border colour
+ * even inside the chart, where the library redefines `--line` itself.
+ */
+:root {
+  --odon-bg: var(--app-bg);
+  --odon-panel: var(--surface);
+  --odon-card: var(--surface);
+  --odon-text: var(--ink);
+  --odon-muted: var(--ink-secondary);
+  --odon-line: var(--line);
+  --odon-accent: var(--teal);
+  --odon-accent2: var(--success);
+  /* The selection ring, as the engine's "r,g,b" triplet of --teal. */
+  --odon-selection-rgb: 13, 148, 136;
+}
+
+.dark {
+  --odon-selection-rgb: 20, 184, 166;
+}
+
+/* The engine sets its selection colour inline (blue); ours wins. */
+.odontogram-root #toothGrid {
+  --odon-select-rgb: var(--odon-selection-rgb) !important;
+}
+
+/*
+ * Out of V1's scope (prompts/28): the ICD-10 diagnoses card and the
+ * Status / Plan toggle — a second treatment plan would compete with the
+ * «Prévu» actes. The library offers no prop for either; these ids are
+ * stable in its DOM contract (docs/spikes/odontogram.md, gate 3).
+ */
+/*
+ * The library puts its panel beside the chart from a 1100 px VIEWPORT; inside
+ * the dossier that leaves the 16-tooth grid too narrow until 1536 px. Below,
+ * the panel goes under the chart. `.odontogram-layout` outranks the library's
+ * own rule, which loads later.
+ */
+@media (max-width: 1535px) {
+  .odontogram-root .layout.odontogram-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .odontogram-root .odontogram-layout > .panel {
+    grid-column: auto;
+  }
+}
+
+/* Its selects ask for 220 px and spill out of the panel on a phone. */
+.odontogram-root .panel select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.odontogram-root #diagnosesSection,
+.odontogram-root #chartModeToggle,
+.odontogram-root #proposedLegend {
+  display: none;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

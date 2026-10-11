@@ -2,6 +2,7 @@ import {
   BanknoteIcon,
   CalendarIcon,
   FileTextIcon,
+  SmileIcon,
   StethoscopeIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -19,6 +20,8 @@ const ICONS: Record<ActivityEntityType, LucideIcon> = {
   [ActivityEntityType.Treatment]: StethoscopeIcon,
   [ActivityEntityType.Payment]: BanknoteIcon,
   [ActivityEntityType.Document]: FileTextIcon,
+  // No tooth in lucide either: the chart reads as the mouth.
+  [ActivityEntityType.Odontogram]: SmileIcon,
 };
 
 /** The badge palette's tints (06-ui.md §4) — tokens only, never a hex. */

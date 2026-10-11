@@ -6,6 +6,7 @@ import { dashboardRouter } from "@/modules/dashboard/server/procedures";
 import { documentsRouter } from "@/modules/documents/server/procedures";
 import { expensesRouter } from "@/modules/expenses/server/procedures";
 import { insurersRouter } from "@/modules/insurers/server/procedures";
+import { odontogramRouter } from "@/modules/odontogram/server/procedures";
 import { patientsRouter } from "@/modules/patients/server/procedures";
 import { paymentsRouter } from "@/modules/payments/server/procedures";
 import { schedulesRouter } from "@/modules/schedules/server/procedures";
@@ -42,6 +43,7 @@ export const appRouter = createTRPCRouter({
   tasks: tasksRouter,
   expenses: expensesRouter,
   activity: activityRouter,
+  odontogram: odontogramRouter,
 });
 
 export type AppRouter = typeof appRouter;

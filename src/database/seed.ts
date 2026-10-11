@@ -33,6 +33,7 @@ import { logActivity } from "../modules/activity/server/log";
 import {
   APPOINTMENT_SUMMARIES,
   DOCUMENT_SUMMARIES,
+  ODONTOGRAM_SUMMARIES,
   PAYMENT_SUMMARIES,
   TREATMENT_SUMMARIES,
 } from "../modules/activity/summaries";
@@ -46,9 +47,17 @@ import {
   type BuildSnapshotInput,
 } from "../modules/documents/snapshot";
 import { DocumentType } from "../modules/documents/types";
+import {
+  ODONTOGRAM_ENVELOPE_VERSION,
+  ODONTOGRAM_LIBRARY_VERSION,
+} from "../modules/odontogram/constants";
+import { odontogramEnvelopeSchema } from "../modules/odontogram/schemas";
 import { formatPatientName } from "../modules/patients/derived";
 import { getNgapAct } from "../modules/services/ngap";
 import { db } from "./index";
+import adultCariesChart from "./fixtures/odontogram-adult-caries.json";
+import adultRestoredChart from "./fixtures/odontogram-adult-restored.json";
+import childChart from "./fixtures/odontogram-child.json";
 import {
   activityLog,
   appointments,
@@ -2218,6 +2227,55 @@ async function main() {
     });
   }
 
+  // ── Odontogrammes (prompts/28) ────────────────────────────────────────────
+  // Three charts BUILT IN THE REAL UI and exported by the library itself
+  // (src/database/fixtures/) — the library's JSON is never hand-written. Two
+  // adults (restorations and an extraction; caries and a planned
+  // extraction) and a child in primary dentition. The first save writes both
+  // layers, so `initial` and `current` start equal. Truncated above: a
+  // re-run never doubles them.
+  const chartAdults = activePatients.filter((p) => !childIds.has(p.id));
+  const chartChild = activePatients.find((p) => childIds.has(p.id));
+  const chartPlan = [
+    { patient: chartAdults[0], data: adultRestoredChart, daysAgo: -3 },
+    { patient: chartAdults[1], data: adultCariesChart, daysAgo: -1 },
+    { patient: chartChild, data: childChart, daysAgo: -2 },
+  ];
+  const odontogramRows = chartPlan.flatMap(({ patient, data, daysAgo }) => {
+    if (!patient) return [];
+    // The same envelope check as `saveChart`: a fixture over the cap fails here.
+    const envelope = odontogramEnvelopeSchema.parse({
+      version: ODONTOGRAM_ENVELOPE_VERSION,
+      library: ODONTOGRAM_LIBRARY_VERSION,
+      data,
+    });
+    const savedAt = notAfterNow(at(clinicDay(daysAgo), "11:15"));
+    return [
+      {
+        id: nanoid(),
+        patientId: patient.id,
+        initial: envelope,
+        current: envelope,
+        updatedByStaffId: STAFF.dentist.id,
+        createdAt: savedAt,
+        updatedAt: savedAt,
+      },
+    ];
+  });
+
+  for (const chart of odontogramRows) {
+    if (!inActivityWindow(chart.updatedAt)) continue;
+    activityLines.push({
+      entityType: ActivityEntityType.Odontogram,
+      entityId: chart.id,
+      action: ActivityAction.Created,
+      patientId: chart.patientId,
+      summary: ODONTOGRAM_SUMMARIES.updated(nameOf(chart.patientId)),
+      staffId: chart.updatedByStaffId,
+      at: chart.updatedAt,
+    });
+  }
+
   for (const p of paymentRows) {
     if (!inActivityWindow(p.paidAt)) continue;
     activityLines.push({
@@ -2298,6 +2356,9 @@ async function main() {
     db.insert(treatments).values(treatmentRows),
     db.insert(payments).values(paymentRows),
     db.insert(documents).values(documentRows),
+    ...(odontogramRows.length > 0
+      ? [db.insert(odontogramCharts).values(odontogramRows)]
+      : []),
     // After every row they point at; truncated above, so a re-run never
     // doubles them.
     ...activityLines.map((line) => logActivity(line)),
@@ -2333,6 +2394,7 @@ async function main() {
     treatments: treatmentRows.length,
     payments: paymentRows.length,
     documents: documentRows.length,
+    odontogramCharts: odontogramRows.length,
     activityLines: activityLines.length,
     insurancePayments: paymentRows.filter((p) => p.method === "insurance")
       .length,

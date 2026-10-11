@@ -43,6 +43,11 @@ const PatientIdPage = async ({ params }: Props) => {
   void queryClient.prefetchQuery(
     trpc.appointments.getUpcomingByPatient.queryOptions({ patientId }),
   );
+  // The «Odontogramme» tab, for the same reason — the chart's JSON only;
+  // the engine itself loads with the tab.
+  void queryClient.prefetchQuery(
+    trpc.odontogram.getChart.queryOptions({ patientId }),
+  );
   // The «Actes» tab, for the same reason.
   void queryClient.prefetchQuery(
     trpc.treatments.getManyByPatient.queryOptions({ patientId }),
