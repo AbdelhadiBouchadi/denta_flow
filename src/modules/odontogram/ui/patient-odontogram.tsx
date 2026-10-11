@@ -2,6 +2,7 @@
 
 import {
   useMutation,
+  useQueryClient,
   useQueryErrorResetBoundary,
   useSuspenseQuery,
 } from "@tanstack/react-query";
@@ -15,7 +16,13 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { Suspense, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 import { toast } from "sonner";
 
@@ -44,7 +51,7 @@ import { useInvalidateOdontogram } from "../hooks/use-invalidate-odontogram";
 import { useLeaveGuard } from "../hooks/use-leave-guard";
 import { canResetOdontogram, canWriteOdontogram } from "../rules";
 import { odontogramEnvelopeSchema } from "../schemas";
-import { OdontogramLayer } from "../types";
+import { OdontogramLayer, type OdontogramChart as StoredChart } from "../types";
 import OdontogramChart, { OdontogramSkeleton } from "./odontogram-chart";
 import type { OdontogramEngineHandle } from "./odontogram-engine";
 
@@ -66,6 +73,30 @@ const saveErrorMessage = (error: unknown) => {
   return zodError?.fieldErrors?.chart?.[0] ?? getErrorMessage(error);
 };
 
+const noopSubscribe = () => () => {};
+
+/**
+ * `false` on the server and during hydration, `true` after. The session is
+ * client-only: reading it before hydration ends would render the toolbar on
+ * the client but not on the server — a hydration mismatch.
+ */
+const useIsHydrated = () =>
+  useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
+
+/**
+ * Whether the stored chart has moved on since `loaded` was handed to the
+ * engine: saved by someone else (a later `updatedAt`), created, or reset.
+ */
+const isNewerChart = (live: StoredChart, loaded: StoredChart) => {
+  if (live === null) return loaded !== null;
+  if (loaded === null) return true;
+  return live.updatedAt.getTime() > loaded.updatedAt.getTime();
+};
+
 /**
  * The dossier's «Odontogramme» tab (prompts/28). The chart is the library's
  * (behind `odontogram-engine.tsx`); this owns everything around it: which
@@ -78,17 +109,24 @@ const saveErrorMessage = (error: unknown) => {
  */
 const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
   const invalidate = useInvalidateOdontogram();
   const { resolvedTheme } = useTheme();
   const { data: session, isPending: sessionPending } = authClient.useSession();
+  const sessionKnown = useIsHydrated() && !sessionPending;
 
   // Prefetched by the dossier page: no request on first paint.
   const { data: chart } = useSuspenseQuery(
     trpc.odontogram.getChart.queryOptions({ patientId: patient.id }),
   );
 
+  // The chart the engine was given: its document AND its version token,
+  // kept together. The query may refetch at any time (focus, another
+  // mutation); a newer stored chart is only ever adopted as a whole, never
+  // by swapping the token under the drawing on screen.
+  const [loaded, setLoaded] = useState<StoredChart>(chart);
   const [layer, setLayer] = useState(OdontogramLayer.Current);
-  // Bumped to load the stored chart again (after a conflict, a retry, a reset).
+  // Bumped to load a chart again (adopted version, conflict, retry, reset).
   const [generation, setGeneration] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [teeth, setTeeth] = useState<ToothCode[]>([]);
@@ -100,7 +138,8 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
 
   // Cosmetic: the procedures refuse whatever this shows (decision 4).
   const actor = {
-    role: session?.user.role,
+    // Unknown — no rights — until the client knows the session.
+    role: sessionKnown ? session?.user.role : undefined,
     patientIsArchived: patient.isArchived,
   };
   const canWrite = canWriteOdontogram(actor);
@@ -108,10 +147,10 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
   const showingInitial = layer === OdontogramLayer.Initial;
   const readOnly = !canWrite || showingInitial;
 
-  // The stored envelope of the layer on screen, checked like the server
+  // The loaded envelope of the layer on screen, checked like the server
   // checks it. `null` — no chart yet — is a blank mouth, not an error.
   const stored =
-    chart === null ? null : showingInitial ? chart.initial : chart.current;
+    loaded === null ? null : showingInitial ? loaded.initial : loaded.current;
   const parsed = useMemo(
     () => (stored === null ? null : odontogramEnvelopeSchema.safeParse(stored)),
     [stored],
@@ -129,24 +168,57 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
     COPY.resetDescription,
     "destructive",
   );
+  const [DiscardConfirmation, confirmDiscard] = useConfirm(
+    COPY.discardTitle,
+    COPY.leaveDescription,
+    "destructive",
+  );
   useLeaveGuard(dirty, confirmLeave, scope);
 
-  const reload = async () => {
-    await invalidate();
+  /** Hand the engine a chart — document and token together — from scratch. */
+  const adopt = (next: StoredChart) => {
+    setLoaded(next);
     setLoadFailed(false);
     setGeneration((g) => g + 1);
   };
 
+  /** Fetch the stored chart and load it, whatever is on screen. */
+  const reload = async () => {
+    await invalidate();
+    adopt(
+      queryClient.getQueryData(
+        trpc.odontogram.getChart.queryKey({ patientId: patient.id }),
+      ) ?? null,
+    );
+  };
+
+  /** «Recharger» on purpose: unsaved edits are lost, so ask first. */
+  const reloadDiscarding = async () => {
+    if (dirty && !(await confirmDiscard())) return;
+    await reload();
+  };
+
   const save = useMutation(
     trpc.odontogram.saveChart.mutationOptions({
-      onSuccess: async () => {
+      onSuccess: async ({ updatedAt }, { chart: saved }) => {
+        // The drawing on screen is now the stored version: advance the
+        // token WITH it, before the refetch, so the refetch reads as our
+        // own save and not someone else's.
+        setLoaded((previous) => ({
+          initial: previous?.initial ?? saved,
+          current: saved,
+          updatedAt,
+        }));
         await invalidate();
         toast.success(COPY.saved);
       },
       onError: (error) => {
         if (error.data?.code === "CONFLICT") {
           toast.error(error.message, {
-            action: { label: COPY.reload, onClick: () => void reload() },
+            action: {
+              label: COPY.reload,
+              onClick: () => void reloadDiscarding(),
+            },
           });
           return;
         }
@@ -166,6 +238,16 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
     }),
   );
 
+  // Someone else saved, created or reset the chart since it was loaded.
+  // Ignored while our own save or reset runs: their refetch is ours.
+  const changedElsewhere =
+    !save.isPending && !reset.isPending && isNewerChart(chart, loaded);
+  // Nothing to lose: load the newer version now (state adjusted during
+  // render — the condition is false on the next pass). With unsaved edits
+  // the notice below asks instead; a save meanwhile still carries the old
+  // token and is refused as CONFLICT.
+  if (changedElsewhere && !dirty) adopt(chart);
+
   const handleSave = () => {
     const data = handle.current?.exportChart();
     if (!isRecord(data)) return;
@@ -177,7 +259,8 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
           library: ODONTOGRAM_LIBRARY_VERSION,
           data,
         },
-        expectedUpdatedAt: chart?.updatedAt ?? null,
+        // The version of the drawing being saved — never the live query's.
+        expectedUpdatedAt: loaded?.updatedAt ?? null,
       },
       { onSuccess: () => handle.current?.markClean(data) },
     );
@@ -193,15 +276,18 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
     setLayer(
       showingInitial ? OdontogramLayer.Current : OdontogramLayer.Initial,
     );
+    // The other layer comes from the latest stored chart, token included.
+    setLoaded(chart);
+    setLoadFailed(false);
   };
 
   const notice = showingInitial
     ? COPY.initialBanner
     : patient.isArchived
       ? COPY.readOnlyArchived
-      : !sessionPending && !canWrite
+      : sessionKnown && !canWrite
         ? COPY.readOnlyRole
-        : chart === null
+        : loaded === null
           ? COPY.emptyHint
           : null;
 
@@ -209,6 +295,7 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
     <div ref={scope} className="flex min-w-0 flex-col gap-4">
       <LeaveConfirmation />
       <ResetConfirmation />
+      <DiscardConfirmation />
       {acteTeeth && (
         <NewTreatmentDialog
           open
@@ -222,7 +309,7 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
 
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {chart !== null && (
+          {loaded !== null && (
             <Button
               variant="outline"
               size="lg"
@@ -262,7 +349,7 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
               <SaveIcon />
               {save.isPending ? COPY.saving : COPY.save}
             </Button>
-            {canReset && chart !== null && (
+            {canReset && loaded !== null && (
               <ResetMenu
                 disabled={reset.isPending}
                 onReset={() => void handleReset()}
@@ -273,6 +360,23 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
       </div>
 
       {notice && <p className="text-muted-foreground text-sm">{notice}</p>}
+
+      {changedElsewhere && dirty && (
+        <div
+          role="status"
+          className="bg-warning-subtle text-warning-strong flex flex-wrap items-center justify-between gap-2 rounded-lg px-4 py-3 text-sm"
+        >
+          <span>{COPY.changedElsewhere}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void reloadDiscarding()}
+          >
+            <RotateCcwIcon />
+            {COPY.reload}
+          </Button>
+        </div>
+      )}
 
       {unreadable ? (
         <div className="flex flex-col items-center gap-4 py-6">
@@ -285,7 +389,7 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
             }
           />
           <div className="flex flex-wrap justify-center gap-2">
-            {canReset && chart !== null && (
+            {canReset && loaded !== null && (
               <Button
                 variant="destructive"
                 size="lg"
@@ -302,7 +406,7 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
             </Button>
           </div>
         </div>
-      ) : sessionPending ? (
+      ) : !sessionKnown ? (
         <OdontogramSkeleton withPanel={false} />
       ) : (
         <div className="bg-background min-w-0 rounded-2xl">

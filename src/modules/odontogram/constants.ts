@@ -167,6 +167,8 @@ export const ODONTOGRAM_COPY = {
       ? "Aucune dent sélectionnée"
       : `${count} dent${count > 1 ? "s" : ""} sélectionnée${count > 1 ? "s" : ""}`,
   reload: "Recharger",
+  changedElsewhere:
+    "Ce schéma dentaire a été modifié par un autre utilisateur depuis son ouverture. « Recharger » affiche sa version — vos modifications non enregistrées seront perdues.",
   retry: "Réessayer",
   leaveTitle: "Quitter sans enregistrer ?",
   leaveDescription:

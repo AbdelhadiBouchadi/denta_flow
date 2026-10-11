@@ -65,7 +65,10 @@ const loadChartRow = async (patientId: string) => {
     .from(odontogramCharts)
     .where(eq(odontogramCharts.patientId, patientId))
     .limit(1);
-  return row ?? null;
+  // Explicit: a destructured row is typed as always present, so `row ?? null`
+  // would erase the null from the inferred type.
+  if (!row) return null;
+  return row;
 };
 
 const forbidden = (message: string | null) => {
@@ -90,7 +93,9 @@ export const odontogramRouter = createTRPCRouter({
         .from(odontogramCharts)
         .where(eq(odontogramCharts.patientId, input.patientId))
         .limit(1);
-      return row ?? null;
+      // Explicit, for the inferred output type (see loadChartRow).
+      if (!row) return null;
+      return row;
     }),
 
   /**
