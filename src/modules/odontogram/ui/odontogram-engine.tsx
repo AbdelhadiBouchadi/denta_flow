@@ -45,8 +45,8 @@ import { ALL_TEETH, type ToothCode } from "../constants";
 export interface OdontogramEngineHandle {
   /** The library's own export of the chart (opaque to everything else). */
   exportChart: () => unknown;
-  /** The chart on screen becomes the clean reference — after a save. */
-  markClean: () => void;
+  /** Mark the saved export clean, or use the current chart when omitted. */
+  markClean: (data?: unknown) => void;
 }
 
 export interface OdontogramEngineProps {
@@ -188,8 +188,8 @@ const EngineBridge = ({
 
       callbacks.current.onReady({
         exportChart: () => getStatusChart(),
-        markClean: () => {
-          baseline = serialize();
+        markClean: (data) => {
+          baseline = data === undefined ? serialize() : JSON.stringify(data);
           report();
         },
       });

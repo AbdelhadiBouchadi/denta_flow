@@ -179,8 +179,7 @@ const OdontogramPanel = ({ patient }: PatientOdontogramProps) => {
         },
         expectedUpdatedAt: chart?.updatedAt ?? null,
       },
-      // The chart on screen is what was stored: clean again.
-      { onSuccess: () => handle.current?.markClean() },
+      { onSuccess: () => handle.current?.markClean(data) },
     );
   };
 
