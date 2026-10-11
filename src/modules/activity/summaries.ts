@@ -122,6 +122,16 @@ export const PAYMENT_SUMMARIES = {
     `Paiement ${ofPatient(patient)} supprimé (${formatDH(amountCents)}).`,
 } as const;
 
+// ── Odontogramme ────────────────────────────────────────────────────────────
+// The chart's content is never described: it is clinical and opaque.
+
+export const ODONTOGRAM_SUMMARIES = {
+  /** Every save, the first included (prompts/28, decision 5). */
+  updated: (patient: string) => `Odontogramme mis à jour — ${patient}.`,
+  reset: (patient: string) =>
+    `Odontogramme réinitialisé (situation initiale effacée) — ${patient}.`,
+} as const;
+
 // ── Documents ───────────────────────────────────────────────────────────────
 // Type, number and patient. `number` may be a token the SQL replaces with the
 // number the insert assigned (documents/server/procedures.ts).

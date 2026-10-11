@@ -16,6 +16,7 @@ export const ACTIVITY_ENTITY_TONES: Record<ActivityEntityType, StatusTone> = {
   [ActivityEntityType.Treatment]: "brand",
   [ActivityEntityType.Payment]: "success",
   [ActivityEntityType.Document]: "neutral",
+  [ActivityEntityType.Odontogram]: "brand",
 };
 
 /** Screen-reader name of each icon. */
@@ -24,6 +25,7 @@ export const ACTIVITY_ENTITY_LABELS: Record<ActivityEntityType, string> = {
   [ActivityEntityType.Treatment]: "Acte",
   [ActivityEntityType.Payment]: "Paiement",
   [ActivityEntityType.Document]: "Document",
+  [ActivityEntityType.Odontogram]: "Odontogramme",
 };
 
 export const ACTIVITY_COPY = {

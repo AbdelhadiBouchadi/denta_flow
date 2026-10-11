@@ -46,6 +46,7 @@ export enum PatientTab {
   Informations = "informations",
   MedicalHistory = "medical_history",
   Appointments = "appointments",
+  Odontogram = "odontogram",
   Treatments = "treatments",
   Payments = "payments",
   Documents = "documents",

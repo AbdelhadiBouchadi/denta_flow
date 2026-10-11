@@ -3,6 +3,7 @@ import {
   CreditCardIcon,
   FileTextIcon,
   HeartPulseIcon,
+  SmileIcon,
   StethoscopeIcon,
   UserIcon,
   type LucideIcon,
@@ -10,6 +11,7 @@ import {
 
 import type { StatusTone } from "@/components/shared/status-badge";
 import { AppointmentStatus } from "@/modules/appointments/types";
+import { ODONTOGRAM_COPY } from "@/modules/odontogram/constants";
 import {
   BloodType,
   Gender,
@@ -69,6 +71,13 @@ export const PATIENT_TABS: readonly PatientTabDefinition[] = [
     label: "Rendez-vous",
     icon: CalendarClockIcon,
   },
+  // Beside «Actes», as in the reference (prompt_material/19): the chart and
+  // the acte list are read together.
+  {
+    value: PatientTab.Odontogram,
+    label: ODONTOGRAM_COPY.tabLabel,
+    icon: SmileIcon,
+  },
   { value: PatientTab.Treatments, label: "Actes", icon: StethoscopeIcon },
   { value: PatientTab.Payments, label: "Paiements", icon: CreditCardIcon },
   { value: PatientTab.Documents, label: "Documents", icon: FileTextIcon },
@@ -79,6 +88,7 @@ export const PATIENT_TAB_VALUES = [
   PatientTab.Informations,
   PatientTab.MedicalHistory,
   PatientTab.Appointments,
+  PatientTab.Odontogram,
   PatientTab.Treatments,
   PatientTab.Payments,
   PatientTab.Documents,

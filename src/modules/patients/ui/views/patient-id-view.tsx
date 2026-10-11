@@ -7,6 +7,7 @@ import ErrorState from "@/components/shared/error-state";
 import LoadingState from "@/components/shared/loading-state";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import PatientOdontogram from "@/modules/odontogram/ui/patient-odontogram";
 import { useTRPC } from "@/trpc/client";
 import { PATIENT_TABS } from "../../constants";
 import { formatPatientName } from "../../derived";
@@ -117,6 +118,12 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
             {/* Its own query, prefetched by the page with the others. */}
             <TabsContent value={PatientTab.Appointments}>
               <PatientAppointments patient={patient} />
+            </TabsContent>
+
+            {/* Its own query, prefetched by the page. The panel unmounts
+                with the tab, and the chart engine with it. */}
+            <TabsContent value={PatientTab.Odontogram}>
+              <PatientOdontogram patient={patient} />
             </TabsContent>
 
             {/* The balance strip reads this same getOne, so an acte saved

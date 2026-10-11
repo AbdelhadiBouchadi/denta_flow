@@ -42,6 +42,7 @@ const PATIENT_TABS = [
   "informations",
   "medical_history",
   "appointments",
+  "odontogram",
   "treatments",
   "payments",
   "documents",

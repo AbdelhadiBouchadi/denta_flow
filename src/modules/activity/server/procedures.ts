@@ -128,7 +128,7 @@ export const activityRouter = createTRPCRouter({
           // "HH:mm" on the clinic's clock, computed once, here — the server
           // render and the hydration print the same text.
           time: toClinicWallClock(row.createdAt),
-          // Stored as text; the four values of ActivityEntityType.
+          // Stored as text; the values of ActivityEntityType.
           entityType: row.entityType as ActivityEntityType,
           action: row.action,
           summary: row.summary,
