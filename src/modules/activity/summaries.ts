@@ -66,6 +66,13 @@ export const APPOINTMENT_SUMMARIES = {
     from.getTime() === to.getTime()
       ? `Rendez-vous ${ofPatient(patient)} du ${formatSlot(to)} confié à un autre praticien.`
       : `Rendez-vous ${ofPatient(patient)} déplacé du ${formatSlot(from)} au ${formatSlot(to)}.`,
+  /**
+   * Saved without a new start or practitioner (reason, notes, type,
+   * duration). Never quotes what changed: reason and notes are free text
+   * that may be medical (prompts/27, decision 4).
+   */
+  updated: (patient: string, startsAt: Date) =>
+    `Rendez-vous ${ofPatient(patient)} du ${formatSlot(startsAt)} modifié.`,
   statusChanged: (
     patient: string,
     from: AppointmentStatus,

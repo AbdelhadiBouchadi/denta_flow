@@ -692,6 +692,15 @@ export const appointmentsRouter = createTRPCRouter({
         };
       }
 
+      // The line belongs to the dossier the UPDATE saves: a booking moved
+      // AND reassigned at once is attributed to its new patient. Read once,
+      // outside the guarded write; a patient deleted meanwhile makes the
+      // UPDATE's foreign key refuse the batch, so this name is never written.
+      const savedPatientName =
+        input.patientId === existing.patientId
+          ? formatPatientName(existing.patient)
+          : await readPatientName(input.patientId);
+
       try {
         const updated = await guardedWrite({
           write: async () => {
@@ -711,20 +720,30 @@ export const appointmentsRouter = createTRPCRouter({
               .where(and(eq(appointments.id, input.id), version))
               .returning();
 
-            // Only a changed practitioner or start time is logged («déplacé»).
-            if (!appointmentMoved) {
-              const [row] = await write;
-              return row;
-            }
+            // Every saved edit is logged: «déplacé» for a new practitioner or
+            // start time, «modifié» otherwise. Either way the line is guarded
+            // on the same version as the UPDATE, in one batch: a stale save
+            // (CONFLICT) writes neither.
+            const entry = appointmentMoved
+              ? {
+                  action: ActivityAction.Rescheduled,
+                  summary: APPOINTMENT_SUMMARIES.rescheduled(
+                    savedPatientName,
+                    existing.startsAt,
+                    slot.startsAt,
+                  ),
+                }
+              : {
+                  action: ActivityAction.Updated,
+                  summary: APPOINTMENT_SUMMARIES.updated(
+                    savedPatientName,
+                    slot.startsAt,
+                  ),
+                };
             const [, [row]] = await db.batch([
               logAppointment(input.id, version, {
-                action: ActivityAction.Rescheduled,
-                patientId: existing.patientId,
-                summary: APPOINTMENT_SUMMARIES.rescheduled(
-                  formatPatientName(existing.patient),
-                  existing.startsAt,
-                  slot.startsAt,
-                ),
+                ...entry,
+                patientId: input.patientId,
                 staffId: ctx.auth.user.id,
               }),
               write,
@@ -777,6 +796,8 @@ export const appointmentsRouter = createTRPCRouter({
         .select({
           patientId: appointments.patientId,
           startsAt: appointments.startsAt,
+          // The version the line's patient and slot were read at.
+          updatedAt: appointments.updatedAt,
           patient: {
             firstName: patients.firstName,
             lastName: patients.lastName,
@@ -789,24 +810,32 @@ export const appointmentsRouter = createTRPCRouter({
       if (!existing) throw notFound();
 
       // The line locks the row, the DELETE then removes it: both or neither.
-      // Treatments reference the appointment with `set null`: the actes stay.
-      const [, [removed]] = await db.batch([
-        logAppointment(input.id, undefined, {
-          action: ActivityAction.Deleted,
-          patientId: existing.patientId,
-          summary: APPOINTMENT_SUMMARIES.removed(
-            formatPatientName(existing.patient),
-            existing.startsAt,
-          ),
-          staffId: ctx.auth.user.id,
-        }),
-        db
-          .delete(appointments)
-          .where(eq(appointments.id, input.id))
-          .returning(),
-      ]);
-
-      if (!removed) throw notFound();
-      return removed;
+      // Both require the version read above, so a booking moved or reassigned
+      // in between is neither logged with stale details nor deleted: CONFLICT,
+      // and the admin decides again on what it is now. Treatments reference
+      // the appointment with `set null`: the actes stay.
+      return guardedWrite({
+        write: async () => {
+          const version = versionMatches(existing.updatedAt);
+          const [, [removed]] = await db.batch([
+            logAppointment(input.id, version, {
+              action: ActivityAction.Deleted,
+              patientId: existing.patientId,
+              summary: APPOINTMENT_SUMMARIES.removed(
+                formatPatientName(existing.patient),
+                existing.startsAt,
+              ),
+              staffId: ctx.auth.user.id,
+            }),
+            db
+              .delete(appointments)
+              .where(and(eq(appointments.id, input.id), version))
+              .returning(),
+          ]);
+          return removed;
+        },
+        exists: () => appointmentExists(input.id),
+        conflictMessage: APPOINTMENT_SERVER_ERRORS.appointmentChangedMeanwhile,
+      });
     }),
 });

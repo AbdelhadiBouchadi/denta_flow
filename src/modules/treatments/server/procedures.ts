@@ -535,6 +535,8 @@ export const treatmentsRouter = createTRPCRouter({
           patientId: treatments.patientId,
           label: treatments.label,
           teeth: treatments.teeth,
+          // The version the line's patient, label and teeth were read at.
+          updatedAt: treatments.updatedAt,
           patient: {
             firstName: patients.firstName,
             lastName: patients.lastName,
@@ -547,10 +549,13 @@ export const treatmentsRouter = createTRPCRouter({
       if (!existing) throw notFound();
 
       // The line locks the row, the DELETE then removes it: both or neither.
-      // Payments allocated to it are kept: their FK is `set null`, so they
-      // fall back to the patient account.
+      // Both require the version read above, so an acte edited in between is
+      // neither logged with stale details nor deleted: CONFLICT. Payments
+      // allocated to it are kept: their FK is `set null`, so they fall back
+      // to the patient account.
+      const version = versionMatches(existing.updatedAt);
       const [, [removed]] = await db.batch([
-        logTreatment(input.id, undefined, {
+        logTreatment(input.id, version, {
           action: ActivityAction.Deleted,
           patientId: existing.patientId,
           summary: TREATMENT_SUMMARIES.removed(
@@ -562,11 +567,22 @@ export const treatmentsRouter = createTRPCRouter({
         }),
         db
           .delete(treatments)
-          .where(eq(treatments.id, input.id))
+          .where(and(eq(treatments.id, input.id), version))
           .returning({ id: treatments.id }),
       ]);
 
-      if (!removed) throw notFound();
-      return removed;
+      if (removed) return removed;
+
+      // Nothing matched: deleted meanwhile, or changed since it was read.
+      const [still] = await db
+        .select({ id: treatments.id })
+        .from(treatments)
+        .where(eq(treatments.id, input.id))
+        .limit(1);
+      if (!still) throw notFound();
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: E.treatmentChangedMeanwhile,
+      });
     }),
 });

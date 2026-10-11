@@ -103,6 +103,12 @@ describe("APPOINTMENT_SUMMARIES", () => {
     );
   });
 
+  it("updated names the slot, never what was edited", () => {
+    expect(APPOINTMENT_SUMMARIES.updated(EL_AMRANI, OCT_8_1030)).toBe(
+      "Rendez-vous d’EL AMRANI Karim du jeudi 8 octobre à 10 h 30 modifié.",
+    );
+  });
+
   it("removed keeps a trail of the slot", () => {
     expect(APPOINTMENT_SUMMARIES.removed(HADDAD, OCT_8_1030)).toBe(
       "Rendez-vous de HADDAD Sara du jeudi 8 octobre à 10 h 30 supprimé.",
@@ -219,6 +225,7 @@ describe("no builder except the payment one receives an amount", () => {
     const sentences = [
       APPOINTMENT_SUMMARIES.created(BENALI, OCT_8_1030),
       APPOINTMENT_SUMMARIES.rescheduled(BENALI, OCT_8_1030, OCT_9_1415),
+      APPOINTMENT_SUMMARIES.updated(BENALI, OCT_8_1030),
       APPOINTMENT_SUMMARIES.removed(BENALI, OCT_8_1030),
       ...Object.values(AppointmentStatus).flatMap((from) =>
         Object.values(AppointmentStatus).map((to) =>
