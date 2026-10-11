@@ -1,3 +1,4 @@
+import { activityRouter } from "@/modules/activity/server/procedures";
 import { appointmentTypesRouter } from "@/modules/appointment-types/server/procedures";
 import { appointmentsRouter } from "@/modules/appointments/server/procedures";
 import { clinicRouter } from "@/modules/clinic/server/procedures";
@@ -40,6 +41,7 @@ export const appRouter = createTRPCRouter({
   dashboard: dashboardRouter,
   tasks: tasksRouter,
   expenses: expensesRouter,
+  activity: activityRouter,
 });
 
 export type AppRouter = typeof appRouter;

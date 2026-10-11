@@ -16,6 +16,7 @@ import {
   sum,
   type SQL,
 } from "drizzle-orm";
+import { nanoid } from "nanoid";
 
 import { PRACTITIONER_ROLES } from "@/constants";
 import { db } from "@/database";
@@ -33,6 +34,10 @@ import {
   isCalendarDate,
   startOfNextClinicDay,
 } from "@/lib/time";
+import { logActivity } from "@/modules/activity/server/log";
+import { TREATMENT_SUMMARIES } from "@/modules/activity/summaries";
+import { ActivityAction, ActivityEntityType } from "@/modules/activity/types";
+import { formatPatientName } from "@/modules/patients/derived";
 import { getNgapAct } from "@/modules/services/ngap";
 import {
   adminProcedure,
@@ -53,6 +58,7 @@ import {
   treatmentUpdateSchema,
   type TreatmentValues,
 } from "../schemas";
+import type { TreatmentStatus } from "../types";
 import { archivedPatientBlocksWrite } from "./archived-guard";
 
 /**
@@ -172,7 +178,7 @@ interface ExistingLinks {
  * Every reference the acte names, checked side by side. On update, an
  * unchanged patient (even archived), practitioner or service (even since
  * deactivated) is kept — the acte is history, and correcting it must not fail
- * on it.
+ * on it. Returns the patient's display name, for the activity line.
  */
 const assertReferences = async (
   input: TreatmentValues,
@@ -184,7 +190,11 @@ const assertReferences = async (
 
   const [[patient], practitioner, service, appointment] = await Promise.all([
     db
-      .select({ isArchived: patients.isArchived })
+      .select({
+        isArchived: patients.isArchived,
+        firstName: patients.firstName,
+        lastName: patients.lastName,
+      })
       .from(patients)
       .where(eq(patients.id, input.patientId))
       .limit(1),
@@ -238,6 +248,9 @@ const assertReferences = async (
   if (appointment && appointment[0]?.patientId !== input.patientId) {
     throw badRequest(E.appointmentMismatch);
   }
+
+  // The name the activity line prints.
+  return formatPatientName(patient);
 };
 
 /** The columns a create or an update writes — the input never spreads raw. */
@@ -282,6 +295,27 @@ const rethrowWriteError = (error: unknown): never => {
  */
 const versionMatches = (expectedUpdatedAt: Date) =>
   sql`date_trunc('milliseconds', ${treatments.updatedAt}) = ${expectedUpdatedAt.toISOString()}::timestamp`;
+
+/**
+ * The acte's activity line, guarded on the row (`logActivity`'s guarded
+ * form): placed BEFORE the write carrying the same precondition, it locks the
+ * row, so the line and the write land together or not at all. No amount in
+ * any acte line (prompts/27, decision 4).
+ */
+const logTreatment = (
+  id: string,
+  precondition: SQL | undefined,
+  entry: {
+    action: ActivityAction;
+    patientId: string;
+    summary: string;
+    staffId: string;
+  },
+) =>
+  logActivity(
+    { entityType: ActivityEntityType.Treatment, entityId: id, ...entry },
+    { table: treatments, where: and(eq(treatments.id, id), precondition) },
+  );
 
 const loadOne = async (id: string) => {
   const [row] = await selectTreatments().where(eq(treatments.id, id));
@@ -380,23 +414,40 @@ export const treatmentsRouter = createTRPCRouter({
   create: protectedProcedure
     .input(treatmentFormSchema)
     .mutation(async ({ input, ctx }) => {
-      await assertReferences(input);
+      const patient = await assertReferences(input);
 
       try {
         // Stamped here, at the millisecond precision the version token
         // travels in, not left to `defaultNow()`.
         const now = new Date();
-        const [created] = await db
-          .insert(treatments)
-          .values({
-            ...writableValues(input),
-            createdAt: now,
-            updatedAt: now,
-            // Audit only, from the session — never read as a filter
-            // (AGENTS.md §2).
-            createdByStaffId: ctx.auth.user.id,
-          })
-          .returning({ id: treatments.id });
+        const id = nanoid();
+        // One batch: a refused insert takes its line with it.
+        const [[created]] = await db.batch([
+          db
+            .insert(treatments)
+            .values({
+              ...writableValues(input),
+              id,
+              createdAt: now,
+              updatedAt: now,
+              // Audit only, from the session — never read as a filter
+              // (AGENTS.md §2).
+              createdByStaffId: ctx.auth.user.id,
+            })
+            .returning({ id: treatments.id }),
+          logActivity({
+            entityType: ActivityEntityType.Treatment,
+            entityId: id,
+            action: ActivityAction.Created,
+            patientId: input.patientId,
+            summary: TREATMENT_SUMMARIES.created(
+              patient,
+              input.label,
+              input.teeth,
+            ),
+            staffId: ctx.auth.user.id,
+          }),
+        ]);
 
         return created;
       } catch (error) {
@@ -411,31 +462,50 @@ export const treatmentsRouter = createTRPCRouter({
    */
   update: protectedProcedure
     .input(treatmentUpdateSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const [existing] = await db
         .select({
           patientId: treatments.patientId,
           practitionerId: treatments.practitionerId,
           serviceId: treatments.serviceId,
+          status: treatments.status,
         })
         .from(treatments)
         .where(eq(treatments.id, input.id))
         .limit(1);
 
       if (!existing) throw notFound();
-      await assertReferences(input, existing);
+      const patient = await assertReferences(input, existing);
+
+      // One line per save: a status move is the fact worth reading
+      // («passé de Prévu à Réalisé»); anything else is «modifié».
+      const from = existing.status as TreatmentStatus;
+      const statusChanged = from !== input.status;
+      const version = versionMatches(input.expectedUpdatedAt);
 
       try {
-        const [updated] = await db
-          .update(treatments)
-          .set({ ...writableValues(input), updatedAt: new Date() })
-          .where(
-            and(
-              eq(treatments.id, input.id),
-              versionMatches(input.expectedUpdatedAt),
-            ),
-          )
-          .returning({ id: treatments.id });
+        const [, [updated]] = await db.batch([
+          logTreatment(input.id, version, {
+            action: statusChanged
+              ? ActivityAction.StatusChanged
+              : ActivityAction.Updated,
+            patientId: input.patientId,
+            summary: statusChanged
+              ? TREATMENT_SUMMARIES.statusChanged(
+                  patient,
+                  input.label,
+                  from,
+                  input.status,
+                )
+              : TREATMENT_SUMMARIES.updated(patient, input.label),
+            staffId: ctx.auth.user.id,
+          }),
+          db
+            .update(treatments)
+            .set({ ...writableValues(input), updatedAt: new Date() })
+            .where(and(eq(treatments.id, input.id), version))
+            .returning({ id: treatments.id }),
+        ]);
 
         if (updated) return updated;
       } catch (error) {
@@ -459,15 +529,60 @@ export const treatmentsRouter = createTRPCRouter({
   // hidden button (AGENTS.md §2).
   remove: adminProcedure
     .input(treatmentIdSchema)
-    .mutation(async ({ input }) => {
-      // Payments allocated to it are kept: their FK is `set null`, so they
-      // fall back to the patient account.
-      const [removed] = await db
-        .delete(treatments)
+    .mutation(async ({ input, ctx }) => {
+      const [existing] = await db
+        .select({
+          patientId: treatments.patientId,
+          label: treatments.label,
+          teeth: treatments.teeth,
+          // The version the line's patient, label and teeth were read at.
+          updatedAt: treatments.updatedAt,
+          patient: {
+            firstName: patients.firstName,
+            lastName: patients.lastName,
+          },
+        })
+        .from(treatments)
+        .innerJoin(patients, eq(treatments.patientId, patients.id))
         .where(eq(treatments.id, input.id))
-        .returning({ id: treatments.id });
+        .limit(1);
+      if (!existing) throw notFound();
 
-      if (!removed) throw notFound();
-      return removed;
+      // The line locks the row, the DELETE then removes it: both or neither.
+      // Both require the version read above, so an acte edited in between is
+      // neither logged with stale details nor deleted: CONFLICT. Payments
+      // allocated to it are kept: their FK is `set null`, so they fall back
+      // to the patient account.
+      const version = versionMatches(existing.updatedAt);
+      const [, [removed]] = await db.batch([
+        logTreatment(input.id, version, {
+          action: ActivityAction.Deleted,
+          patientId: existing.patientId,
+          summary: TREATMENT_SUMMARIES.removed(
+            formatPatientName(existing.patient),
+            existing.label,
+            existing.teeth,
+          ),
+          staffId: ctx.auth.user.id,
+        }),
+        db
+          .delete(treatments)
+          .where(and(eq(treatments.id, input.id), version))
+          .returning({ id: treatments.id }),
+      ]);
+
+      if (removed) return removed;
+
+      // Nothing matched: deleted meanwhile, or changed since it was read.
+      const [still] = await db
+        .select({ id: treatments.id })
+        .from(treatments)
+        .where(eq(treatments.id, input.id))
+        .limit(1);
+      if (!still) throw notFound();
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: E.treatmentChangedMeanwhile,
+      });
     }),
 });

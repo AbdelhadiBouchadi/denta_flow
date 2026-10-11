@@ -31,6 +31,8 @@ export const useInvalidateTreatments = () => {
       queryClient.invalidateQueries(trpc.patients.pathFilter()),
       queryClient.invalidateQueries(trpc.payments.pathFilter()),
       queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
+      // Every write here also writes an «Activité du jour» line.
+      queryClient.invalidateQueries(trpc.activity.pathFilter()),
     ]);
   }, [queryClient, trpc]);
 };

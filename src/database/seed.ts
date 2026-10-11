@@ -29,6 +29,15 @@ import { nanoid } from "nanoid";
 
 import { CLINIC_TIMEZONE } from "../constants";
 import { clinicInstant, toClinicDate } from "../lib/time";
+import { logActivity } from "../modules/activity/server/log";
+import {
+  APPOINTMENT_SUMMARIES,
+  DOCUMENT_SUMMARIES,
+  PAYMENT_SUMMARIES,
+  TREATMENT_SUMMARIES,
+} from "../modules/activity/summaries";
+import { ActivityAction, ActivityEntityType } from "../modules/activity/types";
+import { AppointmentStatus } from "../modules/appointments/types";
 import { buildDocumentFileName } from "../modules/documents/file-name";
 import { nextDocumentNumber } from "../modules/documents/numbering";
 import {
@@ -37,6 +46,7 @@ import {
   type BuildSnapshotInput,
 } from "../modules/documents/snapshot";
 import { DocumentType } from "../modules/documents/types";
+import { formatPatientName } from "../modules/patients/derived";
 import { getNgapAct } from "../modules/services/ngap";
 import { db } from "./index";
 import {
@@ -1375,6 +1385,7 @@ async function main() {
   };
   const pay = (p: Omit<NewPayment, "reference" | "createdByStaffId">) =>
     paymentRows.push({
+      id: nanoid(),
       ...p,
       reference: referenceFor(p.method),
       createdByStaffId: STAFF.secretary.id,
@@ -2122,6 +2133,122 @@ async function main() {
   // The patient in credit: this facture must read «Avance».
   addDocument(DocumentType.Invoice, advancePatient, advanceActs, issuedOn(1, "17:20"));
 
+  // ── Activité du jour — the last 7 clinic days ─────────────────────────────
+  // Written through `logActivity` and the summary builders, exactly as the
+  // procedures write them — the seed builds no `activityLog` row by hand.
+  // Each line is dated at a plausible clinic instant, never in the future,
+  // and signed by the staff member who would have done it.
+  type ActivityLine = Parameters<typeof logActivity>[0];
+  const activityLines: ActivityLine[] = [];
+  const activityFrom = at(clinicDay(-6), "00:00");
+  const inActivityWindow = (instant: Date | null | undefined) =>
+    !!instant && instant >= activityFrom && instant <= now;
+  const nameOf = (patientId: string) =>
+    formatPatientName(patientById.get(patientId)!);
+  const minutesFrom = (instant: Date, minutes: number) =>
+    new Date(instant.getTime() + minutes * 60_000);
+
+  for (const a of appointmentRows) {
+    const createdAt = a.createdAt as Date | undefined;
+    if (inActivityWindow(createdAt)) {
+      activityLines.push({
+        entityType: ActivityEntityType.Appointment,
+        entityId: a.id,
+        action: ActivityAction.Created,
+        patientId: a.patientId,
+        summary: APPOINTMENT_SUMMARIES.created(nameOf(a.patientId), a.startsAt),
+        staffId: a.createdByStaffId ?? null,
+        at: createdAt,
+      });
+    }
+
+    // The status moves the screen shows most: arrivals, closures, no-shows,
+    // cancellations — each from the status it plausibly left.
+    const moves: [AppointmentStatus, AppointmentStatus, Date, string][] = [];
+    const arrivedAt = a.arrivedAt ?? minutesFrom(a.startsAt, -int(2, 12));
+    switch (a.status) {
+      case "arrived":
+        moves.push([AppointmentStatus.Confirmed, AppointmentStatus.Arrived, arrivedAt, STAFF.secretary.id]);
+        break;
+      case "completed":
+        moves.push([AppointmentStatus.Confirmed, AppointmentStatus.Arrived, arrivedAt, STAFF.secretary.id]);
+        moves.push([
+          AppointmentStatus.Arrived,
+          AppointmentStatus.Completed,
+          a.endsAt,
+          (a.practitionerId as string | null) ?? STAFF.admin.id,
+        ]);
+        break;
+      case "no_show":
+        moves.push([AppointmentStatus.Confirmed, AppointmentStatus.NoShow, minutesFrom(a.startsAt, 20), STAFF.secretary.id]);
+        break;
+      case "canceled":
+        moves.push([AppointmentStatus.Planned, AppointmentStatus.Canceled, minutesFrom(a.startsAt, -int(90, 600)), STAFF.secretary.id]);
+        break;
+    }
+    for (const [from, to, when, staffId] of moves) {
+      if (!inActivityWindow(when)) continue;
+      activityLines.push({
+        entityType: ActivityEntityType.Appointment,
+        entityId: a.id,
+        action: ActivityAction.StatusChanged,
+        patientId: a.patientId,
+        summary: APPOINTMENT_SUMMARIES.statusChanged(nameOf(a.patientId), from, to),
+        staffId,
+        at: when,
+      });
+    }
+  }
+
+  for (const t of treatmentRows) {
+    const createdAt = t.createdAt as Date | undefined;
+    if (!inActivityWindow(createdAt)) continue;
+    activityLines.push({
+      entityType: ActivityEntityType.Treatment,
+      entityId: t.id,
+      action: ActivityAction.Created,
+      patientId: t.patientId,
+      summary: TREATMENT_SUMMARIES.created(
+        nameOf(t.patientId),
+        t.label,
+        (t.teeth as string[] | undefined) ?? [],
+      ),
+      staffId: (t.practitionerId as string | null) ?? t.createdByStaffId ?? null,
+      at: notAfterNow(minutesFrom(createdAt!, int(5, 40))),
+    });
+  }
+
+  for (const p of paymentRows) {
+    if (!inActivityWindow(p.paidAt)) continue;
+    activityLines.push({
+      entityType: ActivityEntityType.Payment,
+      entityId: p.id!,
+      action: ActivityAction.Created,
+      patientId: p.patientId,
+      summary: PAYMENT_SUMMARIES.created(nameOf(p.patientId), p.amountCents),
+      staffId: p.createdByStaffId ?? STAFF.secretary.id,
+      at: p.paidAt,
+    });
+  }
+
+  for (const d of documentRows) {
+    const createdAt = d.createdAt as Date | undefined;
+    if (!inActivityWindow(createdAt)) continue;
+    activityLines.push({
+      entityType: ActivityEntityType.Document,
+      entityId: d.id!,
+      action: ActivityAction.Generated,
+      patientId: d.patientId,
+      summary: DOCUMENT_SUMMARIES.generated(
+        d.type as DocumentType.Invoice | DocumentType.Quote,
+        d.number ?? "",
+        nameOf(d.patientId),
+      ),
+      staffId: d.generatedByStaffId ?? null,
+      at: createdAt,
+    });
+  }
+
   // ── Write — one atomic batch ──────────────────────────────────────────────
   const queries: [BatchItem<"pg">, ...BatchItem<"pg">[]] = [
     db
@@ -2171,6 +2298,9 @@ async function main() {
     db.insert(treatments).values(treatmentRows),
     db.insert(payments).values(paymentRows),
     db.insert(documents).values(documentRows),
+    // After every row they point at; truncated above, so a re-run never
+    // doubles them.
+    ...activityLines.map((line) => logActivity(line)),
     db.insert(expenses).values(expenseRows),
     db.insert(tasks).values(taskRows),
   ];
@@ -2203,6 +2333,7 @@ async function main() {
     treatments: treatmentRows.length,
     payments: paymentRows.length,
     documents: documentRows.length,
+    activityLines: activityLines.length,
     insurancePayments: paymentRows.filter((p) => p.method === "insurance")
       .length,
     expenses: expenseRows.length,

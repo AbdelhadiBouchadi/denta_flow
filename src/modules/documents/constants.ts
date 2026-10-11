@@ -3,7 +3,8 @@ import { DocumentType, type GeneratedDocumentType } from "./types";
 
 /**
  * The only place French copy for this slice exists — the screens, the server
- * errors, the activity sentences and every word printed on a PDF. Never
+ * errors and every word printed on a PDF (the activity sentences live in
+ * src/modules/activity/summaries.ts). Never
  * inline one of these in a component (06-ui.md §10).
  */
 
@@ -88,27 +89,6 @@ export const DOCUMENT_SERVER_ERRORS = {
     "Le patient ou un acte sélectionné n’existe plus. Actualisez la page, puis réessayez.",
   unreadableSnapshot:
     "Ce document est illisible : son contenu enregistré ne correspond à aucun format connu.",
-} as const;
-
-// ── Activity log ────────────────────────────────────────────────────────────
-// Rendered verbatim by the «Activité du jour» screen (V1.1). Type, number and
-// patient — a deleted document leaves a trail of what it was.
-
-const ISSUED: Record<GeneratedDocumentType, string> = {
-  [DocumentType.Invoice]: "générée",
-  [DocumentType.Quote]: "généré",
-};
-
-const REMOVED: Record<GeneratedDocumentType, string> = {
-  [DocumentType.Invoice]: "supprimée",
-  [DocumentType.Quote]: "supprimé",
-};
-
-export const DOCUMENT_ACTIVITY = {
-  generated: (type: GeneratedDocumentType, number: string, patient: string) =>
-    `${DOCUMENT_TYPE_LABELS[type]} ${number} ${ISSUED[type]} pour ${patient}.`,
-  removed: (type: GeneratedDocumentType, number: string, patient: string) =>
-    `${DOCUMENT_TYPE_LABELS[type]} ${number} de ${patient} ${REMOVED[type]} (numéro non réattribué).`,
 } as const;
 
 // ── UI copy ─────────────────────────────────────────────────────────────────

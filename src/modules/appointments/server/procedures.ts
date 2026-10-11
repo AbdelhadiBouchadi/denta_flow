@@ -14,7 +14,9 @@ import {
   lt,
   or,
   sql,
+  type SQL,
 } from "drizzle-orm";
+import { nanoid } from "nanoid";
 
 import { PRACTITIONER_ROLES } from "@/constants";
 import { db } from "@/database";
@@ -32,6 +34,9 @@ import { clinicDayRange } from "@/lib/time";
 // The dashboard KPI's own fragment, imported rather than re-written: one
 // definition of «en salle d’attente» (prompts/24, decision 2).
 import { isWaiting } from "@/modules/dashboard/server/today";
+import { logActivity } from "@/modules/activity/server/log";
+import { APPOINTMENT_SUMMARIES } from "@/modules/activity/summaries";
+import { ActivityAction, ActivityEntityType } from "@/modules/activity/types";
 import { formatPatientName } from "@/modules/patients/derived";
 import {
   adminProcedure,
@@ -264,34 +269,97 @@ const appointmentExists = async (id: string) => {
   return row !== undefined;
 };
 
-/** `changeStatus`'s storage, in drizzle. Each method is one statement. */
-const statusStore: AppointmentStatusStore<typeof appointments.$inferSelect> = {
-  readStatus: async (id) => {
-    const [row] = await db
-      .select({ status: appointments.status })
-      .from(appointments)
-      .where(eq(appointments.id, id))
-      .limit(1);
-    // The pgEnum values and the TS enum are kept in lockstep (types.ts).
-    return (row?.status as AppointmentStatus | undefined) ?? null;
+/**
+ * The appointment's activity line, guarded on the row (`logActivity`'s
+ * guarded form): placed BEFORE the write carrying the same precondition, it
+ * locks the row, so the line and the write land together or not at all.
+ */
+const logAppointment = (
+  id: string,
+  precondition: SQL | undefined,
+  entry: {
+    action: ActivityAction;
+    patientId: string;
+    summary: string;
+    staffId: string;
   },
-  writeStatusIf: async (id, from, to) => {
-    const now = new Date();
-    // `arrivedAt` rides in the same UPDATE as the status, so the two can
-    // never disagree. `undefined` leaves it out of the SET: kept.
-    const arrivedAt = arrivedAtFor(to, now);
-    const [updated] = await db
-      .update(appointments)
-      .set({
-        status: to,
-        updatedAt: now,
-        ...(arrivedAt !== undefined && { arrivedAt }),
-      })
-      .where(and(eq(appointments.id, id), eq(appointments.status, from)))
-      .returning();
-    return updated;
-  },
-  exists: appointmentExists,
+) =>
+  logActivity(
+    { entityType: ActivityEntityType.Appointment, entityId: id, ...entry },
+    { table: appointments, where: and(eq(appointments.id, id), precondition) },
+  );
+
+/**
+ * `changeStatus`'s storage, in drizzle, for one request: the staff member
+ * goes on the activity line. `readStatus` also remembers the patient, so the
+ * line names them without a second read.
+ */
+const statusStoreFor = (
+  staffId: string,
+): AppointmentStatusStore<typeof appointments.$inferSelect> => {
+  let patient: { id: string; name: string } | null = null;
+
+  return {
+    readStatus: async (id) => {
+      const [row] = await db
+        .select({
+          status: appointments.status,
+          patientId: patients.id,
+          firstName: patients.firstName,
+          lastName: patients.lastName,
+        })
+        .from(appointments)
+        .innerJoin(patients, eq(appointments.patientId, patients.id))
+        .where(eq(appointments.id, id))
+        .limit(1);
+      if (!row) return null;
+      patient = { id: row.patientId, name: formatPatientName(row) };
+      // The pgEnum values and the TS enum are kept in lockstep (types.ts).
+      return row.status as AppointmentStatus;
+    },
+    writeStatusIf: async (id, from, to) => {
+      if (!patient) return undefined;
+      const now = new Date();
+      // `arrivedAt` rides in the same UPDATE as the status, so the two can
+      // never disagree. `undefined` leaves it out of the SET: kept.
+      const arrivedAt = arrivedAtFor(to, now);
+      const hasStatus = eq(appointments.status, from);
+      // One batch: the line locks the row while it still has `from`, the
+      // UPDATE then lands on it. A status changed meanwhile matches neither:
+      // CONFLICT, and no line.
+      const [, [updated]] = await db.batch([
+        logAppointment(id, hasStatus, {
+          action: ActivityAction.StatusChanged,
+          patientId: patient.id,
+          summary: APPOINTMENT_SUMMARIES.statusChanged(patient.name, from, to),
+          staffId,
+        }),
+        db
+          .update(appointments)
+          .set({
+            status: to,
+            updatedAt: now,
+            ...(arrivedAt !== undefined && { arrivedAt }),
+          })
+          .where(and(eq(appointments.id, id), hasStatus))
+          .returning(),
+      ]);
+      return updated;
+    },
+    exists: appointmentExists,
+  };
+};
+
+/** The name an activity line prints for a booking's patient. */
+const readPatientName = async (patientId: string) => {
+  const [row] = await db
+    .select({ firstName: patients.firstName, lastName: patients.lastName })
+    .from(patients)
+    .where(eq(patients.id, patientId))
+    .limit(1);
+  // A patient deleted meanwhile: the INSERT's foreign key refuses the
+  // booking (missingReference), so this text is never written.
+  return row ? formatPatientName(row) : "";
 };
 
 // ── Router ──────────────────────────────────────────────────────────────────
@@ -509,25 +577,40 @@ export const appointmentsRouter = createTRPCRouter({
         // appointments sets `updatedAt` from the app, at the millisecond
         // precision the version token travels in.
         const now = new Date();
-        const [created] = await db
-          .insert(appointments)
-          .values({
-            createdAt: now,
-            updatedAt: now,
+        const id = nanoid();
+        const patient = await readPatientName(input.patientId);
+        // One batch: a booking refused by the exclusion constraint takes its
+        // line with it.
+        const [[created]] = await db.batch([
+          db
+            .insert(appointments)
+            .values({
+              id,
+              createdAt: now,
+              updatedAt: now,
+              patientId: input.patientId,
+              practitionerId: input.practitionerId,
+              typeId: input.typeId,
+              startsAt: slot.startsAt,
+              endsAt: slot.endsAt,
+              reason: input.reason,
+              notes: input.notes,
+              // Always `planned`; status moves only through updateStatus.
+              status: "planned",
+              // Audit only, from the session — never read as a filter
+              // (AGENTS.md §2).
+              createdByStaffId: ctx.auth.user.id,
+            })
+            .returning(),
+          logActivity({
+            entityType: ActivityEntityType.Appointment,
+            entityId: id,
+            action: ActivityAction.Created,
             patientId: input.patientId,
-            practitionerId: input.practitionerId,
-            typeId: input.typeId,
-            startsAt: slot.startsAt,
-            endsAt: slot.endsAt,
-            reason: input.reason,
-            notes: input.notes,
-            // Always `planned`; status moves only through updateStatus.
-            status: "planned",
-            // Audit only, from the session — never read as a filter
-            // (AGENTS.md §2).
-            createdByStaffId: ctx.auth.user.id,
-          })
-          .returning();
+            summary: APPOINTMENT_SUMMARIES.created(patient, slot.startsAt),
+            staffId: ctx.auth.user.id,
+          }),
+        ]);
 
         return {
           requiresConfirmation: false as const,
@@ -552,7 +635,7 @@ export const appointmentsRouter = createTRPCRouter({
    */
   update: protectedProcedure
     .input(appointmentUpdateSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const [existing] = await db
         .select({
           status: appointments.status,
@@ -561,8 +644,13 @@ export const appointmentsRouter = createTRPCRouter({
           typeId: appointments.typeId,
           startsAt: appointments.startsAt,
           endsAt: appointments.endsAt,
+          patient: {
+            firstName: patients.firstName,
+            lastName: patients.lastName,
+          },
         })
         .from(appointments)
+        .innerJoin(patients, eq(appointments.patientId, patients.id))
         .where(eq(appointments.id, input.id))
         .limit(1);
 
@@ -581,6 +669,9 @@ export const appointmentsRouter = createTRPCRouter({
         existing.practitionerId !== input.practitionerId ||
         existing.startsAt.getTime() !== slot.startsAt.getTime() ||
         existing.endsAt.getTime() !== slot.endsAt.getTime();
+      const appointmentMoved =
+        existing.practitionerId !== input.practitionerId ||
+        existing.startsAt.getTime() !== slot.startsAt.getTime();
 
       const [, , warnings] = await Promise.all([
         assertPractitioner(input.practitionerId, existing.practitionerId),
@@ -601,10 +692,20 @@ export const appointmentsRouter = createTRPCRouter({
         };
       }
 
+      // The line belongs to the dossier the UPDATE saves: a booking moved
+      // AND reassigned at once is attributed to its new patient. Read once,
+      // outside the guarded write; a patient deleted meanwhile makes the
+      // UPDATE's foreign key refuse the batch, so this name is never written.
+      const savedPatientName =
+        input.patientId === existing.patientId
+          ? formatPatientName(existing.patient)
+          : await readPatientName(input.patientId);
+
       try {
         const updated = await guardedWrite({
           write: async () => {
-            const [row] = await db
+            const version = versionMatches(input.expectedUpdatedAt);
+            const write = db
               .update(appointments)
               .set({
                 patientId: input.patientId,
@@ -616,13 +717,37 @@ export const appointmentsRouter = createTRPCRouter({
                 notes: input.notes,
                 updatedAt: new Date(),
               })
-              .where(
-                and(
-                  eq(appointments.id, input.id),
-                  versionMatches(input.expectedUpdatedAt),
-                ),
-              )
+              .where(and(eq(appointments.id, input.id), version))
               .returning();
+
+            // Every saved edit is logged: «déplacé» for a new practitioner or
+            // start time, «modifié» otherwise. Either way the line is guarded
+            // on the same version as the UPDATE, in one batch: a stale save
+            // (CONFLICT) writes neither.
+            const entry = appointmentMoved
+              ? {
+                  action: ActivityAction.Rescheduled,
+                  summary: APPOINTMENT_SUMMARIES.rescheduled(
+                    savedPatientName,
+                    existing.startsAt,
+                    slot.startsAt,
+                  ),
+                }
+              : {
+                  action: ActivityAction.Updated,
+                  summary: APPOINTMENT_SUMMARIES.updated(
+                    savedPatientName,
+                    slot.startsAt,
+                  ),
+                };
+            const [, [row]] = await db.batch([
+              logAppointment(input.id, version, {
+                ...entry,
+                patientId: input.patientId,
+                staffId: ctx.auth.user.id,
+              }),
+              write,
+            ]);
             return row;
           },
           exists: () => appointmentExists(input.id),
@@ -649,9 +774,13 @@ export const appointmentsRouter = createTRPCRouter({
    */
   updateStatus: protectedProcedure
     .input(appointmentStatusUpdateSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
-        return await changeStatus(statusStore, input.id, input.status);
+        return await changeStatus(
+          statusStoreFor(ctx.auth.user.id),
+          input.id,
+          input.status,
+        );
       } catch (error) {
         if (error instanceof TRPCError) throw error;
         return rethrowAppointmentWriteError(error);
@@ -662,14 +791,51 @@ export const appointmentsRouter = createTRPCRouter({
   // hidden button (AGENTS.md §2). Cancelling is the everyday action.
   remove: adminProcedure
     .input(appointmentIdSchema)
-    .mutation(async ({ input }) => {
-      // Treatments reference the appointment with `set null`: the actes stay.
-      const [removed] = await db
-        .delete(appointments)
+    .mutation(async ({ input, ctx }) => {
+      const [existing] = await db
+        .select({
+          patientId: appointments.patientId,
+          startsAt: appointments.startsAt,
+          // The version the line's patient and slot were read at.
+          updatedAt: appointments.updatedAt,
+          patient: {
+            firstName: patients.firstName,
+            lastName: patients.lastName,
+          },
+        })
+        .from(appointments)
+        .innerJoin(patients, eq(appointments.patientId, patients.id))
         .where(eq(appointments.id, input.id))
-        .returning();
+        .limit(1);
+      if (!existing) throw notFound();
 
-      if (!removed) throw notFound();
-      return removed;
+      // The line locks the row, the DELETE then removes it: both or neither.
+      // Both require the version read above, so a booking moved or reassigned
+      // in between is neither logged with stale details nor deleted: CONFLICT,
+      // and the admin decides again on what it is now. Treatments reference
+      // the appointment with `set null`: the actes stay.
+      return guardedWrite({
+        write: async () => {
+          const version = versionMatches(existing.updatedAt);
+          const [, [removed]] = await db.batch([
+            logAppointment(input.id, version, {
+              action: ActivityAction.Deleted,
+              patientId: existing.patientId,
+              summary: APPOINTMENT_SUMMARIES.removed(
+                formatPatientName(existing.patient),
+                existing.startsAt,
+              ),
+              staffId: ctx.auth.user.id,
+            }),
+            db
+              .delete(appointments)
+              .where(and(eq(appointments.id, input.id), version))
+              .returning(),
+          ]);
+          return removed;
+        },
+        exists: () => appointmentExists(input.id),
+        conflictMessage: APPOINTMENT_SERVER_ERRORS.appointmentChangedMeanwhile,
+      });
     }),
 });

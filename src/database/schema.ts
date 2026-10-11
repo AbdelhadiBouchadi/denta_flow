@@ -413,12 +413,22 @@ export const tasks = pgTable("tasks", {
 ]);
 
 // ── Activity log («activité du jour») ───────────────────────────────────────
+// Append-only. Written ONLY through `logActivity`
+// (src/modules/activity/server/log.ts), in the same `db.batch` as the change
+// it describes. The column order below is the order `logActivity`'s
+// INSERT … SELECT selects in — drizzle refuses any other.
 export const activityLog = pgTable("activity_log", {
   id: text("id").primaryKey().$defaultFn(() => nanoid()),
-  entityType: text("entity_type").notNull(),      // "appointment" | "treatment" | "payment" | "document"
+  entityType: text("entity_type").notNull(),      // ActivityEntityType (src/modules/activity/types.ts)
   entityId: text("entity_id").notNull(),
-  action: text("action").notNull(),               // "created" | "updated" | "status_changed" | "generated"
+  action: text("action").notNull(),               // ActivityAction (src/modules/activity/types.ts)
   summary: text("summary").notNull(),             // French sentence rendered verbatim
   staffId: text("staff_id").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-}, (t) => [index("activity_log_created_at_idx").on(t.createdAt)]);
+  // The dossier the line links to. Deleting the patient keeps the line and
+  // nulls the link; rows written before branch 27 are null too.
+  patientId: text("patient_id").references(() => patients.id, { onDelete: "set null" }),
+}, (t) => [
+  index("activity_log_created_at_idx").on(t.createdAt),
+  index("activity_log_patient_created_at_idx").on(t.patientId, t.createdAt),
+]);
