@@ -18,7 +18,9 @@ import { useTRPC } from "@/trpc/client";
  * - `patients.pathFilter()` — the dossier header chip, the balance strip of
  *   both tabs, and the patients list's «Reste à payer»;
  * - `dashboard.pathFilter()` — today's revenue, the period's revenue, reste
- *   à encaisser, avances and «Soldes à recouvrer».
+ *   à encaisser, avances and «Soldes à recouvrer»;
+ * - `statistics.pathFilter()` — encaissé, the methods, reste à encaisser,
+ *   avances and the résultat on `/statistiques`.
  *
  * No `setQueryData`, no optimistic update on money.
  */
@@ -32,6 +34,7 @@ export const useInvalidatePayments = () => {
       queryClient.invalidateQueries(trpc.treatments.pathFilter()),
       queryClient.invalidateQueries(trpc.patients.pathFilter()),
       queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
+      queryClient.invalidateQueries(trpc.statistics.pathFilter()),
       // Every write here also writes an «Activité du jour» line.
       queryClient.invalidateQueries(trpc.activity.pathFilter()),
     ]);

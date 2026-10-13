@@ -14,6 +14,8 @@ import { useTRPC } from "@/trpc/client";
  * dossier's visit count, so the patients reads are refreshed too. And every
  * one of them can move a figure on `/tableau-de-bord` — the day's total, the
  * restants, the waiting room, the agenda rows — hence `dashboard.pathFilter()`.
+ * `/statistiques` counts them too (honorés, absences, annulations,
+ * fréquentation, per practitioner) — hence `statistics.pathFilter()`.
  *
  * `pathFilter()` is router-wide: every cached input of every appointments
  * procedure — the agenda's ranges, the list's pages, the dossier tab, getOne —
@@ -35,6 +37,7 @@ export const useInvalidateAppointments = () => {
       // rendez-vous» — and any patients read added later.
       queryClient.invalidateQueries(trpc.patients.pathFilter()),
       queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
+      queryClient.invalidateQueries(trpc.statistics.pathFilter()),
       // Every write here also writes an «Activité du jour» line.
       queryClient.invalidateQueries(trpc.activity.pathFilter()),
     ]);

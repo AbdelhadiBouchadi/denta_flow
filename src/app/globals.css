@@ -170,11 +170,13 @@
   --input: var(--line);
   --ring: var(--teal);
 
+  /* Chart series (prompts/30): five hues told apart by hue, not lightness —
+     the grey --subtle is kept for «Autres» and «À venir», never a series. */
   --chart-1: var(--teal);
   --chart-2: var(--info);
   --chart-3: var(--warning);
   --chart-4: var(--success);
-  --chart-5: var(--subtle);
+  --chart-5: #7c3aed;
 
   --sidebar: var(--surface);
   --sidebar-foreground: var(--ink-secondary);
@@ -239,11 +241,13 @@
   --input: var(--line);
   --ring: var(--teal);
 
+  /* Chart series (prompts/30): five hues told apart by hue, not lightness —
+     the grey --subtle is kept for «Autres» and «À venir», never a series. */
   --chart-1: var(--teal);
   --chart-2: var(--info);
   --chart-3: var(--warning);
   --chart-4: var(--success);
-  --chart-5: var(--subtle);
+  --chart-5: #a78bfa;
 
   --sidebar: var(--surface);
   --sidebar-foreground: var(--ink-secondary);
