@@ -658,7 +658,12 @@ export const documentsRouter = createTRPCRouter({
           ? db
               .select({ id: certificateTemplates.id })
               .from(certificateTemplates)
-              .where(eq(certificateTemplates.key, templateKey))
+              .where(
+                and(
+                  eq(certificateTemplates.key, templateKey),
+                  eq(certificateTemplates.isActive, true),
+                ),
+              )
               .limit(1)
           : Promise.resolve(null),
       ]);

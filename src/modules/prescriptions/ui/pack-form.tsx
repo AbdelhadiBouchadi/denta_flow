@@ -8,6 +8,7 @@ import {
   Controller,
   useFieldArray,
   useForm,
+  useWatch,
   type Control,
 } from "react-hook-form";
 import { toast } from "sonner";
@@ -224,7 +225,7 @@ export const PackForm = ({ initialValues, onSuccess, onCancel }: PackFormProps) 
                 count={fields.length}
                 disabled={isPending}
                 options={medicationOptions}
-                isInactive={inactiveIds.has(field.medicationId)}
+                inactiveIds={inactiveIds}
                 onMove={(to) => move(index, to)}
                 onRemove={() => remove(index)}
               />
@@ -258,7 +259,7 @@ interface PackItemEditorProps {
   count: number;
   disabled: boolean;
   options: { id: string; value: string; children: ReactNode }[];
-  isInactive: boolean;
+  inactiveIds: Set<string>;
   onMove: (to: number) => void;
   onRemove: () => void;
 }
@@ -269,95 +270,103 @@ const PackItemEditor = ({
   count,
   disabled,
   options,
-  isInactive,
+  inactiveIds,
   onMove,
   onRemove,
-}: PackItemEditorProps) => (
-  <li className="flex min-w-0 flex-col gap-3 rounded-lg border p-3">
-    <div className="flex items-center justify-between gap-2">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="text-muted-foreground text-sm font-semibold tabular-nums">
-          {COPY.lineNumber(index + 1)}
-        </span>
-        {isInactive && (
-          <StatusBadge label={COPY.inactiveMedication} tone="warning" />
-        )}
-      </div>
-      <div className="flex shrink-0 items-center">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={COPY.moveUp}
-          disabled={disabled || index === 0}
-          onClick={() => onMove(index - 1)}
-        >
-          <ArrowUpIcon />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={COPY.moveDown}
-          disabled={disabled || index === count - 1}
-          onClick={() => onMove(index + 1)}
-        >
-          <ArrowDownIcon />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label={COPY.removeLine}
-          disabled={disabled}
-          onClick={onRemove}
-        >
-          <XIcon />
-        </Button>
-      </div>
-    </div>
+}: PackItemEditorProps) => {
+  const medicationId = useWatch({
+    control,
+    name: `items.${index}.medicationId`,
+  });
+  const isInactive = inactiveIds.has(medicationId);
 
-    <Controller
-      control={control}
-      name={`items.${index}.medicationId`}
-      render={({ field, fieldState }) => (
-        <Field data-invalid={fieldState.invalid} className="min-w-0">
-          <FieldLabel>{COPY.label}</FieldLabel>
-          <CommandSelect
-            value={field.value}
-            onSelect={field.onChange}
-            options={options}
-            className="w-full min-w-0"
-          />
-          {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-        </Field>
-      )}
-    />
-    <ItemText
-      control={control}
-      name={`items.${index}.posology`}
-      label={COPY.posology}
-      maxLength={MEDICATION_FIELD_MAX.posology}
-      disabled={disabled}
-    />
-    <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-      <ItemText
+  return (
+    <li className="flex min-w-0 flex-col gap-3 rounded-lg border p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-muted-foreground text-sm font-semibold tabular-nums">
+            {COPY.lineNumber(index + 1)}
+          </span>
+          {isInactive && (
+            <StatusBadge label={COPY.inactiveMedication} tone="warning" />
+          )}
+        </div>
+        <div className="flex shrink-0 items-center">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={COPY.moveUp}
+            disabled={disabled || index === 0}
+            onClick={() => onMove(index - 1)}
+          >
+            <ArrowUpIcon />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={COPY.moveDown}
+            disabled={disabled || index === count - 1}
+            onClick={() => onMove(index + 1)}
+          >
+            <ArrowDownIcon />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={COPY.removeLine}
+            disabled={disabled}
+            onClick={onRemove}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      </div>
+
+      <Controller
         control={control}
-        name={`items.${index}.duration`}
-        label={COPY.duration}
-        maxLength={MEDICATION_FIELD_MAX.duration}
-        disabled={disabled}
+        name={`items.${index}.medicationId`}
+        render={({ field, fieldState }) => (
+          <Field data-invalid={fieldState.invalid} className="min-w-0">
+            <FieldLabel>{COPY.label}</FieldLabel>
+            <CommandSelect
+              value={field.value}
+              onSelect={field.onChange}
+              options={options}
+              className="w-full min-w-0"
+            />
+            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+          </Field>
+        )}
       />
       <ItemText
         control={control}
-        name={`items.${index}.remark`}
-        label={COPY.remark}
-        maxLength={PACK_FIELD_MAX.remark}
+        name={`items.${index}.posology`}
+        label={COPY.posology}
+        maxLength={MEDICATION_FIELD_MAX.posology}
         disabled={disabled}
       />
-    </div>
-  </li>
-);
+      <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <ItemText
+          control={control}
+          name={`items.${index}.duration`}
+          label={COPY.duration}
+          maxLength={MEDICATION_FIELD_MAX.duration}
+          disabled={disabled}
+        />
+        <ItemText
+          control={control}
+          name={`items.${index}.remark`}
+          label={COPY.remark}
+          maxLength={PACK_FIELD_MAX.remark}
+          disabled={disabled}
+        />
+      </div>
+    </li>
+  );
+};
 
 const ItemText = ({
   control,
