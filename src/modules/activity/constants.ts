@@ -17,6 +17,9 @@ export const ACTIVITY_ENTITY_TONES: Record<ActivityEntityType, StatusTone> = {
   [ActivityEntityType.Payment]: "success",
   [ActivityEntityType.Document]: "neutral",
   [ActivityEntityType.Odontogram]: "brand",
+  [ActivityEntityType.Medication]: "neutral",
+  [ActivityEntityType.PrescriptionPack]: "neutral",
+  [ActivityEntityType.CertificateTemplate]: "neutral",
 };
 
 /** Screen-reader name of each icon. */
@@ -26,6 +29,9 @@ export const ACTIVITY_ENTITY_LABELS: Record<ActivityEntityType, string> = {
   [ActivityEntityType.Payment]: "Paiement",
   [ActivityEntityType.Document]: "Document",
   [ActivityEntityType.Odontogram]: "Odontogramme",
+  [ActivityEntityType.Medication]: "Médicament",
+  [ActivityEntityType.PrescriptionPack]: "Pack d’ordonnance",
+  [ActivityEntityType.CertificateTemplate]: "Modèle de certificat",
 };
 
 export const ACTIVITY_COPY = {

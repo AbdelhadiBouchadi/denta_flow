@@ -18,6 +18,7 @@ import { nanoid } from "nanoid";
 
 import { db } from "@/database";
 import {
+  certificateTemplates,
   clinicSettings,
   documents,
   patients,
@@ -33,6 +34,11 @@ import {
 import { logActivity } from "@/modules/activity/server/log";
 import { DOCUMENT_SUMMARIES } from "@/modules/activity/summaries";
 import { ActivityAction, ActivityEntityType } from "@/modules/activity/types";
+import {
+  buildCertificateValues,
+  renderCertificateBody,
+  resolveCertificatePeriod,
+} from "@/modules/certificates/variables";
 import { formatPatientName } from "@/modules/patients/derived";
 import {
   amountPaidCents as patientAmountPaidCents,
@@ -61,20 +67,27 @@ import {
   documentGetManySchema,
   documentIdSchema,
   documentsByPatientSchema,
+  generateCertificateSchema,
   generateInvoiceSchema,
+  generatePrescriptionSchema,
   generateQuoteSchema,
 } from "../schemas";
 import {
+  buildCertificateSnapshot,
   buildDocumentSnapshot,
+  buildPrescriptionSnapshot,
   pickPractitionerId,
   type BuildSnapshotInput,
+  type DocumentSnapshot,
 } from "../snapshot";
 import { DocumentType, type GeneratedDocumentType } from "../types";
+import { medicalWriterProcedure } from "./medical-procedure";
 
 /**
  * The generated-documents registry. Reads are `protectedProcedure` with no
  * staff scoping — every staff member sees the whole clinic (AGENTS.md §2);
- * generating is any staff; `remove` is admin.
+ * a facture or a devis is any staff; an ordonnance or a certificat is admin
+ * or dentist (`medicalWriterProcedure`, prompts/29); `remove` is admin.
  *
  * A row holds an immutable JSON snapshot, never a PDF and never a pointer to
  * live data: GET /api/documents/[id] renders the snapshot on every download
@@ -298,6 +311,7 @@ const isForeignKeyViolation = (error: unknown) => {
   return false;
 };
 
+/** A facture or a devis: the actes are read, the rule applied. */
 type GenerateInput =
   | { type: DocumentType.Invoice; patientId: string; treatmentIds: string[] }
   | {
@@ -337,10 +351,9 @@ const generate = async (input: GenerateInput, staffId: string) => {
   // One instant for the number's year, the file name, the dates printed and
   // the row's `createdAt`.
   const issuedAt = new Date();
-  const prefix = documentNumberPrefix(input.type, issuedAt);
   const base = {
     // Overwritten in SQL by the number the insert assigns.
-    number: prefix,
+    number: documentNumberPrefix(input.type, issuedAt),
     issuedAt,
     clinic,
     patient,
@@ -351,16 +364,45 @@ const generate = async (input: GenerateInput, staffId: string) => {
     input.type === DocumentType.Invoice
       ? { ...base, type: input.type, account: patient }
       : { ...base, type: input.type, validUntil: input.validUntil };
-  const snapshot = buildDocumentSnapshot(build);
 
-  const fileName = buildDocumentFileName({
+  return issueDocument({
     type: input.type,
+    patient,
+    snapshot: buildDocumentSnapshot(build),
+    staffId,
+    issuedAt,
+  });
+};
+
+/**
+ * The one way a document enters the registry, whatever its type: the file
+ * name, the activity sentence, then ONE batch — the numbered insert and its
+ * activity line — retried a bounded number of times on a lost number.
+ * `snapshot.number` is the bare prefix; the insert writes the real number
+ * into both the row and the snapshot.
+ */
+const issueDocument = async ({
+  type,
+  patient,
+  snapshot,
+  staffId,
+  issuedAt,
+}: {
+  type: GeneratedDocumentType;
+  patient: { id: string; firstName: string; lastName: string };
+  snapshot: DocumentSnapshot;
+  staffId: string;
+  issuedAt: Date;
+}) => {
+  const prefix = documentNumberPrefix(type, issuedAt);
+  const fileName = buildDocumentFileName({
+    type,
     firstName: patient.firstName,
     lastName: patient.lastName,
     issuedAt,
   });
   const summary = DOCUMENT_SUMMARIES.generated(
-    input.type,
+    type,
     NUMBER_TOKEN,
     formatPatientName(patient),
   );
@@ -371,7 +413,7 @@ const generate = async (input: GenerateInput, staffId: string) => {
       await db.batch([
         insertNumbered({
           id,
-          type: input.type,
+          type,
           prefix,
           patientId: patient.id,
           fileName,
@@ -396,6 +438,50 @@ const generate = async (input: GenerateInput, staffId: string) => {
     throw error;
   }
 };
+
+// ── Medical documents (prompts/29) ──────────────────────────────────────────
+//
+// The client sends what the dentist validated — the lines, or the body with
+// its {{variables}} — and nothing that identifies anyone. The patient, the
+// signing practitioner (the CALLER, decision 4), the clinic, the date and the
+// number are read and written here. Archived patients are accepted
+// (decision 5).
+
+/** The patient block of a medical document. No account, no phone. */
+const readMedicalPatient = async (patientId: string) => {
+  const [row] = await db
+    .select({
+      id: patients.id,
+      shortCode: patients.shortCode,
+      firstName: patients.firstName,
+      lastName: patients.lastName,
+      cin: patients.cin,
+      birthDate: patients.birthDate,
+    })
+    .from(patients)
+    .where(eq(patients.id, patientId))
+    .limit(1);
+  if (!row) {
+    throw new TRPCError({ code: "NOT_FOUND", message: E.patientNotFound });
+  }
+  return row;
+};
+
+/** The caller's own row: name, title and INPE as they are NOW, frozen. */
+const readSigningPractitioner = async (staffId: string) => {
+  const practitioner = await readStaff(staffId);
+  if (!practitioner) {
+    throw new TRPCError({ code: "NOT_FOUND", message: E.practitionerNotFound });
+  }
+  return practitioner;
+};
+
+const readMedicalFacts = (patientId: string, staffId: string) =>
+  Promise.all([
+    readMedicalPatient(patientId),
+    readClinic(),
+    readSigningPractitioner(staffId),
+  ]);
 
 // ── Download ────────────────────────────────────────────────────────────────
 
@@ -498,10 +584,12 @@ export const documentsRouter = createTRPCRouter({
       const counts: Record<GeneratedDocumentType, number> = {
         [DocumentType.Invoice]: 0,
         [DocumentType.Quote]: 0,
+        [DocumentType.Prescription]: 0,
+        [DocumentType.Certificate]: 0,
       };
       for (const row of rows) {
-        if (row.type === DocumentType.Invoice || row.type === DocumentType.Quote) {
-          counts[row.type] = row.count;
+        if (row.type in counts) {
+          counts[row.type as GeneratedDocumentType] = row.count;
         }
       }
       return counts;
@@ -520,6 +608,98 @@ export const documentsRouter = createTRPCRouter({
     .mutation(({ input, ctx }) =>
       generate({ ...input, type: DocumentType.Quote }, ctx.auth.user.id),
     ),
+
+  /**
+   * An ordonnance: 1 to 20 lines, each COPIED into the snapshot. Admin or
+   * dentist only — the role is checked before the input (decision 3). No
+   * interaction or dose check of any kind (decision 7).
+   */
+  generatePrescription: medicalWriterProcedure
+    .input(generatePrescriptionSchema)
+    .mutation(async ({ input, ctx }) => {
+      const staffId = ctx.auth.user.id;
+      const [patient, clinic, practitioner] = await readMedicalFacts(
+        input.patientId,
+        staffId,
+      );
+      const issuedAt = new Date();
+      const snapshot = buildPrescriptionSnapshot({
+        number: documentNumberPrefix(DocumentType.Prescription, issuedAt),
+        issuedAt,
+        clinic,
+        patient,
+        practitioner,
+        noHeader: input.noHeader,
+        lines: input.lines,
+      });
+      return issueDocument({
+        type: DocumentType.Prescription,
+        patient,
+        snapshot,
+        staffId,
+        issuedAt,
+      });
+    }),
+
+  /**
+   * A certificat. The body arrives WITH its {{variables}}; the server renders
+   * them from its own reads — the patient's identity is never taken from the
+   * client's text — computes `jours` from the range, refuses any variable it
+   * cannot resolve, and stores the final text.
+   */
+  generateCertificate: medicalWriterProcedure
+    .input(generateCertificateSchema)
+    .mutation(async ({ input, ctx }) => {
+      const staffId = ctx.auth.user.id;
+      const templateKey = input.templateKey ?? null;
+      const [[patient, clinic, practitioner], template] = await Promise.all([
+        readMedicalFacts(input.patientId, staffId),
+        templateKey
+          ? db
+              .select({ id: certificateTemplates.id })
+              .from(certificateTemplates)
+              .where(eq(certificateTemplates.key, templateKey))
+              .limit(1)
+          : Promise.resolve(null),
+      ]);
+      if (template && template.length === 0) {
+        throw badRequest(E.templateNotFound);
+      }
+
+      const period = resolveCertificatePeriod(input);
+      if (!period.ok) throw badRequest(period.error);
+
+      const issuedAt = new Date();
+      const rendered = renderCertificateBody(
+        input.body,
+        buildCertificateValues({
+          patient,
+          practitionerName: practitioner.name,
+          issuedAt,
+          period: period.period,
+        }),
+      );
+      if (!rendered.ok) throw badRequest(rendered.error);
+
+      const snapshot = buildCertificateSnapshot({
+        number: documentNumberPrefix(DocumentType.Certificate, issuedAt),
+        issuedAt,
+        clinic,
+        patient,
+        practitioner,
+        noHeader: input.noHeader,
+        templateKey,
+        period: period.period,
+        body: rendered.text,
+      });
+      return issueDocument({
+        type: DocumentType.Certificate,
+        patient,
+        snapshot,
+        staffId,
+        issuedAt,
+      });
+    }),
 
   // DESTRUCTIVE ⇒ admin, and the rejection comes from here, never from a
   // hidden button (AGENTS.md §2). The row is retired, not erased: it leaves

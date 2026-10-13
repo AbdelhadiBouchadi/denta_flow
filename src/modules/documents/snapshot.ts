@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import { isCalendarDate } from "@/lib/time";
+import { isCalendarDate, toClinicDate } from "@/lib/time";
+import {
+  CERTIFICATE_BODY_MAX,
+  CERTIFICATE_MAX_DAYS,
+  PRESCRIPTION_MAX_LINES,
+} from "./constants";
 import { DocumentType } from "./types";
 
 /**
@@ -16,6 +21,12 @@ import { DocumentType } from "./types";
  *
  * Instants travel as ISO strings (jsonb has no date type); calendar days as
  * "yyyy-MM-dd". Money is integer centimes, as everywhere.
+ *
+ * The medical variants (prompts/29) follow the same rule: an ordonnance
+ * COPIES each line's label, strength, posology, duration and remark — never a
+ * medication id it would need to render — and a certificat stores its FINAL
+ * rendered text. Editing a medication, deleting a pack or rewording a
+ * template later changes no issued document.
  */
 
 const text = z.string().min(1);
@@ -23,6 +34,7 @@ const text = z.string().min(1);
 const optionalText = z.string().min(1).nullable();
 const instant = z.iso.datetime();
 const cents = z.number().int();
+const calendarDay = z.string().refine(isCalendarDate);
 
 const clinicSchema = z.object({
   name: text,
@@ -95,17 +107,80 @@ const quoteV1Schema = z.object({
   ...baseV1,
   type: z.literal(DocumentType.Quote),
   /** A clinic calendar day. A devis never mentions payments. */
-  validUntil: z.string().refine(isCalendarDate),
+  validUntil: calendarDay,
 });
+
+// ── Medical variants (prompts/29) ───────────────────────────────────────────
+
+/** No phone on a medical document; the age is frozen at the issue date. */
+const medicalPatientSchema = z.object({
+  id: text,
+  shortCode: text,
+  firstName: text,
+  lastName: text,
+  cin: optionalText,
+  age: z.number().int().min(0).nullable(),
+});
+
+const medicalBaseV1 = {
+  version: z.literal(1),
+  number: text,
+  issuedAt: instant,
+  clinic: clinicSchema,
+  patient: medicalPatientSchema,
+  /** The signing practitioner — whoever generated it. Never absent. */
+  practitioner: practitionerSchema,
+  /** «Papier à en-tête»: the header block is hidden, its space kept. */
+  noHeader: z.boolean(),
+};
+
+const prescriptionLineSchema = z.object({
+  label: text,
+  strength: optionalText,
+  posology: text,
+  duration: optionalText,
+  remark: optionalText,
+});
+
+const prescriptionV1Schema = z.object({
+  ...medicalBaseV1,
+  type: z.literal(DocumentType.Prescription),
+  lines: z.array(prescriptionLineSchema).min(1).max(PRESCRIPTION_MAX_LINES),
+});
+
+const certificateV1Schema = z.object({
+  ...medicalBaseV1,
+  type: z.literal(DocumentType.Certificate),
+  /** The template it started from, for the record; null for a free text. */
+  templateKey: optionalText,
+  period: z.object({
+    startDate: calendarDay.nullable(),
+    endDate: calendarDay.nullable(),
+    days: z.number().int().min(1).max(CERTIFICATE_MAX_DAYS).nullable(),
+  }),
+  /** The final text, variables resolved. Plain text; line breaks kept. */
+  body: z.string().min(1).max(CERTIFICATE_BODY_MAX),
+});
+
+const billingSnapshotSchema = z.discriminatedUnion("type", [
+  invoiceV1Schema,
+  quoteV1Schema,
+]);
 
 export const documentSnapshotSchema = z.discriminatedUnion("type", [
   invoiceV1Schema,
   quoteV1Schema,
+  prescriptionV1Schema,
+  certificateV1Schema,
 ]);
 
 export type DocumentSnapshot = z.infer<typeof documentSnapshotSchema>;
 export type InvoiceSnapshot = z.infer<typeof invoiceV1Schema>;
 export type QuoteSnapshot = z.infer<typeof quoteV1Schema>;
+export type BillingSnapshot = InvoiceSnapshot | QuoteSnapshot;
+export type PrescriptionSnapshot = z.infer<typeof prescriptionV1Schema>;
+export type CertificateSnapshot = z.infer<typeof certificateV1Schema>;
+export type MedicalSnapshot = PrescriptionSnapshot | CertificateSnapshot;
 
 /** The version a generation writes today. */
 export const CURRENT_SNAPSHOT_VERSION = 1;
@@ -179,9 +254,29 @@ const clean = (value: string | null | undefined) => {
   return trimmed ? trimmed : null;
 };
 
+const toClinicBlock = (clinic: ClinicSource) => ({
+  name: clinic.name.trim(),
+  address: clean(clinic.address),
+  city: clean(clinic.city),
+  phone: clean(clinic.phone),
+  email: clean(clinic.email),
+  ice: clean(clinic.ice),
+  patente: clean(clinic.patente),
+  fiscalId: clean(clinic.fiscalId),
+  cnssNumber: clean(clinic.cnssNumber),
+  inpe: clean(clinic.inpe),
+  logoUrl: clean(clinic.logoUrl),
+});
+
+const toPractitionerBlock = (practitioner: PractitionerSource) => ({
+  name: practitioner.name,
+  title: clean(practitioner.title),
+  inpe: clean(practitioner.inpe),
+});
+
 export const buildDocumentSnapshot = (
   input: BuildSnapshotInput,
-): DocumentSnapshot => {
+): BillingSnapshot => {
   const lines = input.lines.map((line) => ({
     treatmentId: line.id,
     date: (line.performedAt ?? line.createdAt).toISOString(),
@@ -195,19 +290,7 @@ export const buildDocumentSnapshot = (
     version: CURRENT_SNAPSHOT_VERSION,
     number: input.number,
     issuedAt: input.issuedAt.toISOString(),
-    clinic: {
-      name: input.clinic.name.trim(),
-      address: clean(input.clinic.address),
-      city: clean(input.clinic.city),
-      phone: clean(input.clinic.phone),
-      email: clean(input.clinic.email),
-      ice: clean(input.clinic.ice),
-      patente: clean(input.clinic.patente),
-      fiscalId: clean(input.clinic.fiscalId),
-      cnssNumber: clean(input.clinic.cnssNumber),
-      inpe: clean(input.clinic.inpe),
-      logoUrl: clean(input.clinic.logoUrl),
-    },
+    clinic: toClinicBlock(input.clinic),
     patient: {
       id: input.patient.id,
       shortCode: input.patient.shortCode,
@@ -217,18 +300,14 @@ export const buildDocumentSnapshot = (
       phone: clean(input.patient.phone),
     },
     practitioner: input.practitioner
-      ? {
-          name: input.practitioner.name,
-          title: clean(input.practitioner.title),
-          inpe: clean(input.practitioner.inpe),
-        }
+      ? toPractitionerBlock(input.practitioner)
       : null,
     lines,
     totalCents: lines.reduce((sum, line) => sum + line.amountCents, 0),
   } as const;
 
   // Parsed on the way in too: a snapshot that would not render is never stored.
-  return documentSnapshotSchema.parse(
+  return billingSnapshotSchema.parse(
     input.type === DocumentType.Invoice
       ? {
           ...base,
@@ -255,3 +334,107 @@ export const pickPractitionerId = (
   const [only] = ids;
   return ids.size === 1 && only ? only : generatedById;
 };
+
+// ── Medical builders (prompts/29) ───────────────────────────────────────────
+
+interface MedicalPatientSource {
+  id: string;
+  shortCode: string;
+  firstName: string;
+  lastName: string;
+  cin: string | null;
+  /** "yyyy-MM-dd", or null when unknown. */
+  birthDate: string | null;
+}
+
+/**
+ * Whole years on `day` (a clinic calendar day), from the calendar strings
+ * alone — no Date, so no zone can move a birthday. `null` when the birth date
+ * is unknown, malformed or after `day`.
+ */
+export const ageOnDay = (birthDate: string | null, day: string) => {
+  if (!birthDate || !isCalendarDate(birthDate) || !isCalendarDate(day)) {
+    return null;
+  }
+  const [birthYear, birthMonth, birthDay] = birthDate.split("-").map(Number);
+  const [year, month, date] = day.split("-").map(Number);
+  const beforeBirthday =
+    month < birthMonth || (month === birthMonth && date < birthDay);
+  const age = year - birthYear - (beforeBirthday ? 1 : 0);
+  return age >= 0 ? age : null;
+};
+
+interface MedicalBuildBase {
+  number: string;
+  issuedAt: Date;
+  clinic: ClinicSource;
+  patient: MedicalPatientSource;
+  practitioner: PractitionerSource;
+  noHeader: boolean;
+}
+
+const medicalBase = (input: MedicalBuildBase) => ({
+  version: CURRENT_SNAPSHOT_VERSION,
+  number: input.number,
+  issuedAt: input.issuedAt.toISOString(),
+  clinic: toClinicBlock(input.clinic),
+  patient: {
+    id: input.patient.id,
+    shortCode: input.patient.shortCode,
+    firstName: input.patient.firstName,
+    lastName: input.patient.lastName,
+    cin: clean(input.patient.cin),
+    age: ageOnDay(input.patient.birthDate, toClinicDate(input.issuedAt)),
+  },
+  practitioner: toPractitionerBlock(input.practitioner),
+  noHeader: input.noHeader,
+});
+
+export interface PrescriptionLineSource {
+  label: string;
+  strength?: string | null;
+  posology: string;
+  duration?: string | null;
+  remark?: string | null;
+}
+
+/**
+ * The ordonnance as printed. The lines are COPIES of what the dentist
+ * validated: a line picked from the catalogue carries no medication id.
+ */
+export const buildPrescriptionSnapshot = (
+  input: MedicalBuildBase & { lines: readonly PrescriptionLineSource[] },
+): PrescriptionSnapshot =>
+  prescriptionV1Schema.parse({
+    ...medicalBase(input),
+    type: DocumentType.Prescription,
+    lines: input.lines.map((line) => ({
+      label: line.label.trim(),
+      strength: clean(line.strength),
+      posology: line.posology.trim(),
+      duration: clean(line.duration),
+      remark: clean(line.remark),
+    })),
+  });
+
+export interface CertificatePeriod {
+  startDate: string | null;
+  endDate: string | null;
+  days: number | null;
+}
+
+/** The certificat as printed: `body` is already the FINAL text. */
+export const buildCertificateSnapshot = (
+  input: MedicalBuildBase & {
+    templateKey: string | null;
+    period: CertificatePeriod;
+    body: string;
+  },
+): CertificateSnapshot =>
+  certificateV1Schema.parse({
+    ...medicalBase(input),
+    type: DocumentType.Certificate,
+    templateKey: clean(input.templateKey),
+    period: input.period,
+    body: input.body,
+  });

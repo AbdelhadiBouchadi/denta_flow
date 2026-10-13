@@ -1,4 +1,5 @@
 import type { StatusTone } from "@/components/shared/status-badge";
+import { StaffRole } from "@/modules/staff/types";
 import { DocumentType, type GeneratedDocumentType } from "./types";
 
 /**
@@ -23,28 +24,62 @@ export const DOCUMENT_TYPE_TONES: Record<DocumentType, StatusTone> = {
   [DocumentType.Invoice]: "brand",
   [DocumentType.Quote]: "info",
   [DocumentType.CareSheet]: "neutral",
-  [DocumentType.Prescription]: "neutral",
-  [DocumentType.Certificate]: "neutral",
+  [DocumentType.Prescription]: "success",
+  [DocumentType.Certificate]: "warning",
 };
 
 /**
  * The types that exist today — what the filter lists and the nuqs / zod
- * parsers accept. V1.1 adds its types here when it ships their generator.
+ * parsers accept. A type is added here when its generator ships.
  */
 export const GENERATED_DOCUMENT_TYPE_VALUES = [
   DocumentType.Invoice,
   DocumentType.Quote,
+  DocumentType.Prescription,
+  DocumentType.Certificate,
 ] as const satisfies readonly GeneratedDocumentType[];
 
 export const DOCUMENT_TYPE_OPTIONS = GENERATED_DOCUMENT_TYPE_VALUES.map(
   (value) => ({ value, label: DOCUMENT_TYPE_LABELS[value] }),
 );
 
-/** «F-2026-0001», «D-2026-0001». */
+/** «F-2026-0001», «D-2026-0001», «O-2026-0001», «C-2026-0001». */
 export const DOCUMENT_NUMBER_PREFIXES: Record<GeneratedDocumentType, string> = {
   [DocumentType.Invoice]: "F",
   [DocumentType.Quote]: "D",
+  [DocumentType.Prescription]: "O",
+  [DocumentType.Certificate]: "C",
 };
+
+// ── Medical documents (prompts/29) ──────────────────────────────────────────
+
+/**
+ * Who may write an ordonnance or a certificat — a medical act — and manage
+ * the medications, packs and certificate templates behind them. Checked in
+ * the procedure (rules.ts); the UI reads the same list only to hide buttons.
+ */
+export const MEDICAL_WRITER_ROLES: readonly StaffRole[] = [
+  StaffRole.Admin,
+  StaffRole.Dentist,
+];
+
+/** An ordonnance prints 1 to this many lines. */
+export const PRESCRIPTION_MAX_LINES = 20;
+
+/** Per-field caps of an ordonnance line, in characters. */
+export const PRESCRIPTION_FIELD_MAX = {
+  label: 120,
+  strength: 40,
+  posology: 300,
+  duration: 80,
+  remark: 300,
+} as const;
+
+/** A certificat's rendered body, in characters. */
+export const CERTIFICATE_BODY_MAX = 4000;
+
+/** A rest period longer than this is a typo, not a certificat. */
+export const CERTIFICATE_MAX_DAYS = 365;
 
 // ── Limits ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +106,19 @@ export const DOCUMENT_VALIDATION_MESSAGES = {
   tooManyLines: `Un document ne peut pas contenir plus de ${DOCUMENT_MAX_LINES} actes.`,
   validUntilInvalid: "Choisissez une date de validité valide",
   validUntilPast: "La date de validité ne peut pas être dans le passé",
+  linesEmpty: "Ajoutez au moins une ligne à l’ordonnance.",
+  linesTooMany: `Une ordonnance ne peut pas contenir plus de ${PRESCRIPTION_MAX_LINES} lignes.`,
+  labelRequired: "Indiquez le médicament.",
+  labelTooLong: `Le médicament ne peut pas dépasser ${PRESCRIPTION_FIELD_MAX.label} caractères.`,
+  strengthTooLong: `Le dosage ne peut pas dépasser ${PRESCRIPTION_FIELD_MAX.strength} caractères.`,
+  posologyRequired: "Indiquez la posologie.",
+  posologyTooLong: `La posologie ne peut pas dépasser ${PRESCRIPTION_FIELD_MAX.posology} caractères.`,
+  durationTooLong: `La durée ne peut pas dépasser ${PRESCRIPTION_FIELD_MAX.duration} caractères.`,
+  remarkTooLong: `La remarque ne peut pas dépasser ${PRESCRIPTION_FIELD_MAX.remark} caractères.`,
+  bodyRequired: "Le texte du certificat est vide.",
+  bodyTooLong: `Le certificat ne peut pas dépasser ${CERTIFICATE_BODY_MAX} caractères.`,
+  dateInvalid: "Choisissez une date valide.",
+  daysInvalid: `Indiquez un nombre de jours entre 1 et ${CERTIFICATE_MAX_DAYS}.`,
 } as const;
 
 export const DOCUMENT_SERVER_ERRORS = {
@@ -89,6 +137,12 @@ export const DOCUMENT_SERVER_ERRORS = {
     "Le patient ou un acte sélectionné n’existe plus. Actualisez la page, puis réessayez.",
   unreadableSnapshot:
     "Ce document est illisible : son contenu enregistré ne correspond à aucun format connu.",
+  medicalForbidden:
+    "Seuls un administrateur ou un dentiste peuvent rédiger une ordonnance ou un certificat.",
+  practitionerNotFound:
+    "Votre compte praticien est introuvable. Reconnectez-vous, puis réessayez.",
+  templateNotFound:
+    "Ce modèle de certificat n’existe plus. Actualisez la page, puis réessayez.",
 } as const;
 
 // ── UI copy ─────────────────────────────────────────────────────────────────
@@ -192,4 +246,9 @@ export const DOCUMENT_PDF_COPY = {
     cnssNumber: "CNSS",
   },
   noTeeth: "",
+  age: (years: number) => `${years} an${years > 1 ? "s" : ""}`,
+  certificateTitle: (number: string) => `CERTIFICAT MÉDICAL N° ${number}`,
+  placeAndDate: (city: string | null, date: string) =>
+    city ? `Fait à ${city}, le ${date}` : `Fait le ${date}`,
+  duration: "Durée",
 } as const;

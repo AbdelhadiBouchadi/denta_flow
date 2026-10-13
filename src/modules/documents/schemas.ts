@@ -7,8 +7,13 @@ import {
   MIN_PAGE_SIZE,
 } from "@/constants";
 import { isCalendarDate, toClinicDate } from "@/lib/time";
+import { CERTIFICATE_RENDER_ERRORS } from "@/modules/certificates/constants";
 import {
+  CERTIFICATE_BODY_MAX,
+  CERTIFICATE_MAX_DAYS,
   DOCUMENT_MAX_LINES,
+  PRESCRIPTION_FIELD_MAX,
+  PRESCRIPTION_MAX_LINES,
   DOCUMENT_VALIDATION_MESSAGES as M,
   GENERATED_DOCUMENT_TYPE_VALUES,
 } from "./constants";
@@ -70,5 +75,89 @@ export const documentGetManySchema = z.object({
   to: z.string().default(""),
 });
 
+// ── Medical documents (prompts/29) ──────────────────────────────────────────
+// Plain text everywhere (decision 8). The client sends what the dentist
+// validated; the server adds everything identifying — patient, practitioner,
+// clinic, date, number — from its own reads.
+
+/** Trimmed; blank ⇒ null. */
+const optionalText = (max: number, message: string) =>
+  z
+    .string()
+    .trim()
+    .max(max, { message })
+    .nullish()
+    .transform((value) => (value ? value : null));
+
+export const prescriptionLineSchema = z.object({
+  /**
+   * The catalogue entry the line started from, or absent for a free line.
+   * Informational only: the snapshot copies the TEXT below and never this id.
+   */
+  medicationId: z.string().min(1).nullish(),
+  label: z
+    .string()
+    .trim()
+    .min(1, { message: M.labelRequired })
+    .max(PRESCRIPTION_FIELD_MAX.label, { message: M.labelTooLong }),
+  strength: optionalText(PRESCRIPTION_FIELD_MAX.strength, M.strengthTooLong),
+  posology: z
+    .string()
+    .trim()
+    .min(1, { message: M.posologyRequired })
+    .max(PRESCRIPTION_FIELD_MAX.posology, { message: M.posologyTooLong }),
+  duration: optionalText(PRESCRIPTION_FIELD_MAX.duration, M.durationTooLong),
+  remark: optionalText(PRESCRIPTION_FIELD_MAX.remark, M.remarkTooLong),
+});
+
+export const generatePrescriptionSchema = z.object({
+  patientId: z.string().min(1, { message: M.patientRequired }),
+  lines: z
+    .array(prescriptionLineSchema)
+    .min(1, { message: M.linesEmpty })
+    .max(PRESCRIPTION_MAX_LINES, { message: M.linesTooMany }),
+  noHeader: z.boolean(),
+});
+
+const optionalDay = z
+  .string()
+  .nullish()
+  .transform((value) => (value ? value : null))
+  .refine((value) => value === null || isCalendarDate(value), {
+    message: M.dateInvalid,
+  });
+
+/**
+ * `body` is the text WITH its `{{variables}}`: the server renders them from
+ * its own reads (certificates/variables.ts). `days` is used only without a
+ * date range — with one, the server computes it.
+ */
+export const generateCertificateSchema = z
+  .object({
+    patientId: z.string().min(1, { message: M.patientRequired }),
+    templateKey: z.string().trim().min(1).max(60).nullish(),
+    body: z
+      .string()
+      .max(CERTIFICATE_BODY_MAX, { message: M.bodyTooLong })
+      .refine((body) => body.trim().length > 0, { message: M.bodyRequired }),
+    startDate: optionalDay,
+    endDate: optionalDay,
+    days: z
+      .number({ message: M.daysInvalid })
+      .int({ message: M.daysInvalid })
+      .min(1, { message: M.daysInvalid })
+      .max(CERTIFICATE_MAX_DAYS, { message: M.daysInvalid })
+      .nullish(),
+    noHeader: z.boolean(),
+  })
+  .refine(
+    ({ startDate, endDate }) => !startDate || !endDate || endDate >= startDate,
+    { message: CERTIFICATE_RENDER_ERRORS.rangeInverted, path: ["endDate"] },
+  );
+
 export type GenerateInvoiceValues = z.output<typeof generateInvoiceSchema>;
 export type GenerateQuoteValues = z.output<typeof generateQuoteSchema>;
+export type GeneratePrescriptionInput = z.input<typeof generatePrescriptionSchema>;
+export type GeneratePrescriptionValues = z.output<typeof generatePrescriptionSchema>;
+export type GenerateCertificateInput = z.input<typeof generateCertificateSchema>;
+export type GenerateCertificateValues = z.output<typeof generateCertificateSchema>;

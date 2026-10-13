@@ -10,6 +10,8 @@ import {
   CalendarClockIcon,
   ClipboardListIcon,
   ClockIcon,
+  FileBadgeIcon,
+  PillIcon,
   ShieldCheckIcon,
   TagsIcon,
   UsersIcon,
@@ -22,6 +24,12 @@ import AppointmentTypesView, {
   AppointmentTypesViewError,
   AppointmentTypesViewLoading,
 } from "@/modules/appointment-types/ui/views/appointment-types-view";
+import { CERTIFICATE_COPY } from "@/modules/certificates/constants";
+import CertificateTemplatesListHeader from "@/modules/certificates/ui/list-header";
+import CertificateTemplatesView, {
+  CertificateTemplatesViewError,
+  CertificateTemplatesViewLoading,
+} from "@/modules/certificates/ui/views/certificate-templates-view";
 import { CLINIC_SETTINGS_COPY } from "@/modules/clinic/constants";
 import SettingsShell from "@/modules/clinic/ui/settings-shell";
 import ClinicSettingsView, {
@@ -34,6 +42,14 @@ import InsurersView, {
   InsurersViewError,
   InsurersViewLoading,
 } from "@/modules/insurers/ui/views/insurers-view";
+import { PRESCRIPTION_COPY } from "@/modules/prescriptions/constants";
+import { loadSearchParams as loadPrescriptionsSearchParams } from "@/modules/prescriptions/params";
+import { medicationsQueryInput } from "@/modules/prescriptions/query-inputs";
+import PrescriptionsListHeader from "@/modules/prescriptions/ui/list-header";
+import PrescriptionsView, {
+  PrescriptionsViewError,
+  PrescriptionsViewLoading,
+} from "@/modules/prescriptions/ui/views/prescriptions-view";
 import { SCHEDULE_COPY } from "@/modules/schedules/constants";
 import { loadSearchParams as loadSchedulesSearchParams } from "@/modules/schedules/params";
 import SchedulesListHeader from "@/modules/schedules/ui/list-header";
@@ -80,6 +96,7 @@ const SettingsPage = async ({ searchParams }: Props) => {
   // loads its own keys.
   const servicesFilters = await loadServicesSearchParams(searchParams);
   const schedulesFilters = await loadSchedulesSearchParams(searchParams);
+  const prescriptionsFilters = await loadPrescriptionsSearchParams(searchParams);
 
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/connexion");
@@ -106,6 +123,17 @@ const SettingsPage = async ({ searchParams }: Props) => {
     trpc.schedules.getExceptions.queryOptions({
       includePast: schedulesFilters.includePast,
     }),
+  );
+  // «Médicaments et packs» and «Modèles de certificats» (prompts/29). The
+  // medication input comes from the one function the view also calls.
+  void queryClient.prefetchQuery(
+    trpc.medications.getMany.queryOptions(
+      medicationsQueryInput(prescriptionsFilters),
+    ),
+  );
+  void queryClient.prefetchQuery(trpc.prescriptionPacks.getMany.queryOptions());
+  void queryClient.prefetchQuery(
+    trpc.certificateTemplates.getMany.queryOptions(),
   );
 
   return (
@@ -209,6 +237,36 @@ const SettingsPage = async ({ searchParams }: Props) => {
                 <Suspense fallback={<SchedulesViewLoading />}>
                   <ErrorBoundary fallback={<SchedulesViewError />}>
                     <SchedulesView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ),
+          },
+          {
+            id: "medications",
+            label: PRESCRIPTION_COPY.sectionTitle,
+            icon: <PillIcon />,
+            content: (
+              <>
+                <PrescriptionsListHeader />
+                <Suspense fallback={<PrescriptionsViewLoading />}>
+                  <ErrorBoundary fallback={<PrescriptionsViewError />}>
+                    <PrescriptionsView />
+                  </ErrorBoundary>
+                </Suspense>
+              </>
+            ),
+          },
+          {
+            id: "certificate-templates",
+            label: CERTIFICATE_COPY.sectionTitle,
+            icon: <FileBadgeIcon />,
+            content: (
+              <>
+                <CertificateTemplatesListHeader />
+                <Suspense fallback={<CertificateTemplatesViewLoading />}>
+                  <ErrorBoundary fallback={<CertificateTemplatesViewError />}>
+                    <CertificateTemplatesView />
                   </ErrorBoundary>
                 </Suspense>
               </>

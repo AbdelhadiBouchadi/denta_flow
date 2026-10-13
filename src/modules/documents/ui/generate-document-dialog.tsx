@@ -16,7 +16,7 @@ import { clinicNow, toClinicDate } from "@/lib/time";
 import type { TreatmentListItem } from "@/modules/treatments/types";
 import { useTRPC } from "@/trpc/client";
 import { DOCUMENT_COPY as COPY, QUOTE_DEFAULT_VALIDITY_DAYS } from "../constants";
-import { useInvalidateDocuments } from "../hooks/use-invalidate-documents";
+import { useOnDocumentGenerated } from "../hooks/use-on-document-generated";
 import { isEligibleForDocument } from "../rules";
 import {
   generateInvoiceSchema,
@@ -24,19 +24,18 @@ import {
   type GenerateInvoiceValues,
   type GenerateQuoteValues,
 } from "../schemas";
-import { DocumentType, type GeneratedDocumentType } from "../types";
-import { documentPdfUrl } from "../urls";
+import { DocumentType, type BillingDocumentType } from "../types";
 import ActeSelectionField from "./acte-selection-field";
 
 interface GenerateDocumentDialogProps {
-  type: GeneratedDocumentType;
+  type: BillingDocumentType;
   patientId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 const DIALOG_COPY: Record<
-  GeneratedDocumentType,
+  BillingDocumentType,
   { title: string; description: string; empty: string }
 > = {
   [DocumentType.Invoice]: {
@@ -54,7 +53,7 @@ const DIALOG_COPY: Record<
 /** The patient's actes this document type may name — the shared rule. */
 export const useEligibleActes = (
   patientId: string,
-  type: GeneratedDocumentType,
+  type: BillingDocumentType,
 ) => {
   const trpc = useTRPC();
   // Prefetched by the dossier page for the «Actes» tab: no extra request.
@@ -105,21 +104,9 @@ interface FormProps {
   onDone: () => void;
 }
 
-/** Opens the new PDF; says so when a popup blocker refused the tab. */
-const useOnGenerated = (onDone: () => void) => {
-  const invalidate = useInvalidateDocuments();
-  return async ({ id }: { id: string }) => {
-    const tab = window.open(documentPdfUrl(id, "inline"), "_blank");
-    await invalidate();
-    if (tab) toast.success(COPY.generated);
-    else toast.info(COPY.popupBlocked);
-    onDone();
-  };
-};
-
 const InvoiceForm = ({ patientId, items, onDone }: FormProps) => {
   const trpc = useTRPC();
-  const onGenerated = useOnGenerated(onDone);
+  const onGenerated = useOnDocumentGenerated(onDone);
   const form = useForm<GenerateInvoiceValues>({
     resolver: zodResolver(generateInvoiceSchema),
     defaultValues: { patientId, treatmentIds: items.map((item) => item.id) },
@@ -162,7 +149,7 @@ const InvoiceForm = ({ patientId, items, onDone }: FormProps) => {
 
 const QuoteForm = ({ patientId, items, onDone }: FormProps) => {
   const trpc = useTRPC();
-  const onGenerated = useOnGenerated(onDone);
+  const onGenerated = useOnDocumentGenerated(onDone);
   const form = useForm<GenerateQuoteValues>({
     resolver: zodResolver(generateQuoteSchema),
     defaultValues: {

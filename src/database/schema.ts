@@ -380,6 +380,69 @@ export const documents = pgTable("documents", {
   uniqueIndex("documents_type_number_idx").on(t.type, t.number),
 ]);
 
+// ── Prescriptions: the medication catalogue and its packs (prompts/29) ──────
+// Reference data for the ordonnance builder. An issued ordonnance COPIES every
+// line it prints into its snapshot, so editing or deactivating a medication,
+// or deleting a pack, never changes a document already issued.
+// `nameKey` is the de-duplication key computed in TS (prescriptions/normalize.ts):
+// name + strength, case- and accent-folded. «Paracétamol 1 g» and
+// «paracetamol 1 G» are one medication; «Amoxicilline 500 mg» and «1 g» are two.
+// A medication is never hard-deleted — `isActive: false` hides it from pickers.
+export const medications = pgTable("medications", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  name: text("name").notNull(),
+  nameKey: text("name_key").notNull(),
+  form: text("form").notNull(),                       // comprimé, gélule, sirop… (constants list)
+  strength: text("strength"),                         // «1 g», «0,12 %»; null when none applies
+  defaultPosology: text("default_posology"),
+  defaultDuration: text("default_duration"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("medications_name_key_idx").on(t.nameKey),
+  index("medications_active_idx").on(t.isActive),
+]);
+
+export const prescriptionPacks = pgTable("prescription_packs", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  name: text("name").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [uniqueIndex("prescription_packs_name_idx").on(sql`lower(${t.name})`)]);
+
+// Items are replaced as a whole on every pack save (delete + insert in one
+// `db.batch`). `medicationId` restricts: a medication cannot be deleted from
+// the UI at all (it is deactivated), so the restriction only ever guards
+// against a hand-written DELETE erasing a pack's content.
+export const prescriptionPackItems = pgTable("prescription_pack_items", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  packId: text("pack_id").notNull().references(() => prescriptionPacks.id, { onDelete: "cascade" }),
+  medicationId: text("medication_id").notNull().references(() => medications.id, { onDelete: "restrict" }),
+  posology: text("posology").notNull(),
+  duration: text("duration"),
+  remark: text("remark"),
+  position: integer("position").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [uniqueIndex("prescription_pack_items_position_idx").on(t.packId, t.position)]);
+
+// ── Certificate templates — a fixed set of three in V1 (no create/delete) ───
+// `key` is a stable slug the seed upserts on; `body` is plain text with
+// {{variables}} (certificates/variables.ts). An issued certificat stores its
+// FINAL rendered text, never a pointer to the template.
+export const certificateTemplates = pgTable("certificate_templates", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  key: text("key").notNull().unique(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // ── Odontogram: one row per patient per dentition, plus two layers ──────────
 // `initial` = situation initiale, `current` = état après actes. Both opaque.
 export const odontogramCharts = pgTable("odontogram_charts", {

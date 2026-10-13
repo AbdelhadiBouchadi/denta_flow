@@ -139,16 +139,46 @@ export const ODONTOGRAM_SUMMARIES = {
 const ISSUED: Record<GeneratedDocumentType, string> = {
   [DocumentType.Invoice]: "générée",
   [DocumentType.Quote]: "généré",
+  [DocumentType.Prescription]: "générée",
+  [DocumentType.Certificate]: "généré",
 };
 
 const REMOVED: Record<GeneratedDocumentType, string> = {
   [DocumentType.Invoice]: "supprimée",
   [DocumentType.Quote]: "supprimé",
+  [DocumentType.Prescription]: "supprimée",
+  [DocumentType.Certificate]: "supprimé",
 };
 
+/**
+ * Never the content: an ordonnance's lines and a certificat's text are
+ * clinical (prompts/27, decision 4) — type, number and patient only.
+ */
 export const DOCUMENT_SUMMARIES = {
   generated: (type: GeneratedDocumentType, number: string, patient: string) =>
     `${DOCUMENT_TYPE_LABELS[type]} ${number} ${ISSUED[type]} pour ${patient}.`,
   removed: (type: GeneratedDocumentType, number: string, patient: string) =>
     `${DOCUMENT_TYPE_LABELS[type]} ${number} ${ofPatient(patient)} ${REMOVED[type]} (numéro non réattribué).`,
+} as const;
+
+// ── Ordonnance and certificate catalogues (prompts/29) ──────────────────────
+// No patient: these are clinic reference data. The label is the catalogue's
+// own name («Amoxicilline 1 g», «Post-extraction»), never a posology or a
+// template body.
+
+export const MEDICATION_SUMMARIES = {
+  created: (label: string) => `Médicament « ${label} » ajouté au catalogue.`,
+  updated: (label: string) => `Médicament « ${label} » modifié.`,
+  deactivated: (label: string) => `Médicament « ${label} » désactivé.`,
+  reactivated: (label: string) => `Médicament « ${label} » réactivé.`,
+} as const;
+
+export const PRESCRIPTION_PACK_SUMMARIES = {
+  created: (name: string) => `Pack d’ordonnance « ${name} » créé.`,
+  updated: (name: string) => `Pack d’ordonnance « ${name} » modifié.`,
+  removed: (name: string) => `Pack d’ordonnance « ${name} » supprimé.`,
+} as const;
+
+export const CERTIFICATE_TEMPLATE_SUMMARIES = {
+  updated: (title: string) => `Modèle de certificat « ${title} » modifié.`,
 } as const;

@@ -6,7 +6,10 @@ import { DocumentType } from "@/modules/documents/types";
 import { TreatmentStatus } from "@/modules/treatments/types";
 import {
   APPOINTMENT_SUMMARIES,
+  CERTIFICATE_TEMPLATE_SUMMARIES,
   DOCUMENT_SUMMARIES,
+  MEDICATION_SUMMARIES,
+  PRESCRIPTION_PACK_SUMMARIES,
   ofPatient,
   PAYMENT_SUMMARIES,
   teethSuffix,
@@ -196,6 +199,37 @@ describe("DOCUMENT_SUMMARIES", () => {
       DOCUMENT_SUMMARIES.removed(DocumentType.Invoice, "F-2026-0001", EL_AMRANI),
     ).toBe(
       "Facture F-2026-0001 d’EL AMRANI Karim supprimée (numéro non réattribué).",
+    );
+  });
+});
+
+describe("medical documents and their catalogues (prompts/29)", () => {
+  it("names the type, the number and the patient — never the content", () => {
+    expect(
+      DOCUMENT_SUMMARIES.generated(DocumentType.Prescription, "O-2026-0001", BENALI),
+    ).toBe("Ordonnance O-2026-0001 générée pour BENALI Amine.");
+    expect(
+      DOCUMENT_SUMMARIES.generated(DocumentType.Certificate, "C-2026-0001", BENALI),
+    ).toBe("Certificat C-2026-0001 généré pour BENALI Amine.");
+    expect(
+      DOCUMENT_SUMMARIES.removed(DocumentType.Prescription, "O-2026-0002", EL_AMRANI),
+    ).toBe(
+      "Ordonnance O-2026-0002 d’EL AMRANI Karim supprimée (numéro non réattribué).",
+    );
+  });
+
+  it("logs catalogue changes by their catalogue name", () => {
+    expect(MEDICATION_SUMMARIES.created("Amoxicilline 1 g")).toBe(
+      "Médicament « Amoxicilline 1 g » ajouté au catalogue.",
+    );
+    expect(MEDICATION_SUMMARIES.deactivated("Tramadol 50 mg")).toBe(
+      "Médicament « Tramadol 50 mg » désactivé.",
+    );
+    expect(PRESCRIPTION_PACK_SUMMARIES.removed("Post-extraction")).toBe(
+      "Pack d’ordonnance « Post-extraction » supprimé.",
+    );
+    expect(CERTIFICATE_TEMPLATE_SUMMARIES.updated("Certificat de repos")).toBe(
+      "Modèle de certificat « Certificat de repos » modifié.",
     );
   });
 });

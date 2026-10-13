@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { clinicInstant } from "@/lib/time";
+import { DOCUMENT_NUMBER_PREFIXES } from "./constants";
 import {
   documentNumberPrefix,
   formatDocumentNumber,
@@ -116,5 +117,82 @@ describe("withUniqueViolationRetry", () => {
       NumberUnavailableError,
     );
     expect(attempt).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("ordonnance and certificat numbers (prompts/29)", () => {
+  it("starts O- and C- at 0001 for the first of the year", () => {
+    expect(nextDocumentNumber(DocumentType.Prescription, JUNE_2026, [])).toBe(
+      "O-2026-0001",
+    );
+    expect(nextDocumentNumber(DocumentType.Certificate, JUNE_2026, [])).toBe(
+      "C-2026-0001",
+    );
+  });
+
+  it("counts each type on its own: factures and devis never move O- or C-", () => {
+    const existing = [
+      "F-2026-0041",
+      "D-2026-0012",
+      "O-2026-0003",
+      "C-2025-0090",
+    ];
+    expect(
+      nextDocumentNumber(DocumentType.Prescription, JUNE_2026, existing),
+    ).toBe("O-2026-0004");
+    expect(
+      nextDocumentNumber(DocumentType.Certificate, JUNE_2026, existing),
+    ).toBe("C-2026-0001");
+  });
+
+  it("rolls O- and C- over on the clinic's new year", () => {
+    const lastMinute2026 = clinicInstant("2026-12-31", "23:59");
+    const firstMinute2027 = clinicInstant("2027-01-01", "00:00");
+    expect(documentNumberPrefix(DocumentType.Prescription, lastMinute2026)).toBe(
+      "O-2026",
+    );
+    expect(
+      nextDocumentNumber(DocumentType.Certificate, firstMinute2027, [
+        "C-2026-0310",
+      ]),
+    ).toBe("C-2027-0001");
+  });
+
+  it("retries a lost ordonnance number like any other", async () => {
+    const attempt = vi
+      .fn<(n: number) => Promise<string>>()
+      .mockRejectedValueOnce(uniqueViolation())
+      .mockRejectedValueOnce(uniqueViolation())
+      .mockResolvedValueOnce("O-2026-0003");
+    await expect(withUniqueViolationRetry(attempt, 5)).resolves.toBe(
+      "O-2026-0003",
+    );
+    expect(attempt).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("regression: facture and devis numbers are unchanged by branch 29", () => {
+  it("keeps the F- and D- prefixes and their sequences", () => {
+    // Medical numbers in the same registry and year change nothing.
+    const existing = ["F-2026-0007", "D-2026-0002", "O-2026-0050", "C-2026-0050"];
+    expect(nextDocumentNumber(DocumentType.Invoice, JUNE_2026, existing)).toBe(
+      "F-2026-0008",
+    );
+    expect(nextDocumentNumber(DocumentType.Quote, JUNE_2026, existing)).toBe(
+      "D-2026-0003",
+    );
+    expect(documentNumberPrefix(DocumentType.Invoice, JUNE_2026)).toBe("F-2026");
+    expect(documentNumberPrefix(DocumentType.Quote, JUNE_2026)).toBe("D-2026");
+  });
+
+  it("gives every generated type a distinct one-letter prefix", () => {
+    const prefixes = Object.values(DOCUMENT_NUMBER_PREFIXES);
+    expect(new Set(prefixes).size).toBe(prefixes.length);
+    expect(DOCUMENT_NUMBER_PREFIXES).toEqual({
+      [DocumentType.Invoice]: "F",
+      [DocumentType.Quote]: "D",
+      [DocumentType.Prescription]: "O",
+      [DocumentType.Certificate]: "C",
+    });
   });
 });
