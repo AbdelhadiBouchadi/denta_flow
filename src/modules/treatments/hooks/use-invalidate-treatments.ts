@@ -17,7 +17,9 @@ import { useTRPC } from "@/trpc/client";
  * - `payments.pathFilter()` — a payment row names its allocated acte, and
  *   deleting an acte returns its payments to the patient account;
  * - `dashboard.pathFilter()` — a billable status change moves «Soldes à
- *   recouvrer» and «Reste à encaisser».
+ *   recouvrer» and «Reste à encaisser»;
+ * - `statistics.pathFilter()` — «Produit», the top actes, the categories,
+ *   per-practitioner production and the balances on `/statistiques`.
  *
  * No `setQueryData`, no optimistic update on money.
  */
@@ -31,6 +33,7 @@ export const useInvalidateTreatments = () => {
       queryClient.invalidateQueries(trpc.patients.pathFilter()),
       queryClient.invalidateQueries(trpc.payments.pathFilter()),
       queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
+      queryClient.invalidateQueries(trpc.statistics.pathFilter()),
       // Every write here also writes an «Activité du jour» line.
       queryClient.invalidateQueries(trpc.activity.pathFilter()),
     ]);

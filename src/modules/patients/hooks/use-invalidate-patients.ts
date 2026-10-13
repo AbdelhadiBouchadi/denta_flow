@@ -35,5 +35,8 @@ export const useInvalidatePatients = () => {
     // `hasMedicalAlert` boolean: an allergy added in «Modifier» must reach the
     // agenda sheet, `/rendez-vous` and the waiting room without a reload.
     await queryClient.invalidateQueries(trpc.appointments.pathFilter());
+    // `/statistiques`: «Nouveaux patients», «Patients par assurance» (an
+    // insurer change, an archive), and everything a remove cascades to.
+    await queryClient.invalidateQueries(trpc.statistics.pathFilter());
   }, [queryClient, trpc]);
 };

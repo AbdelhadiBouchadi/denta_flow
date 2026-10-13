@@ -29,6 +29,7 @@ import {
   user,
 } from "@/database/schema";
 import { isBillableTreatment } from "@/database/sql/billable";
+import { treatmentDate } from "@/database/sql/treatment-date";
 import {
   clinicInstant,
   isCalendarDate,
@@ -96,12 +97,10 @@ const remainingCents = sql<number>`(${amountDueCents} - ${amountPaidCents})::int
 
 /**
  * The date an acte is listed, filtered and sorted by: when it was performed,
- * else when it was recorded. `created_at` has no zone and holds UTC, so it is
- * read as UTC explicitly rather than in the session's zone.
+ * else when it was recorded — the shared definition, so `/statistiques` dates
+ * «Production» exactly as this list does (src/database/sql/treatment-date.ts).
  */
-const listedAt: SQL<Date> = sql`COALESCE(${treatments.performedAt}, ${treatments.createdAt} AT TIME ZONE 'UTC')`.mapWith(
-  treatments.performedAt,
-);
+const listedAt = treatmentDate;
 
 /** One row shape for the list, the dossier tab and `getOne`. */
 const selectTreatments = () =>

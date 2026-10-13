@@ -2688,9 +2688,57 @@ async function main() {
     db.insert(expenses).values(expenseRows),
     db.insert(tasks).values(taskRows),
   ];
+  // History (prompts/30) — built and checked BEFORE anything is written.
+  const history = buildHistory({
+    dentistIds,
+    adminId,
+    typeRows,
+    serviceRows,
+    insurerRows,
+    existingAppointments: appointmentRows,
+    usedNames,
+  });
+  const allBilled = new Map(billed);
+  for (const t of history.treatmentRows) {
+    if (t.status === "completed" || t.status === "in_progress") {
+      allBilled.set(
+        t.patientId,
+        (allBilled.get(t.patientId) ?? 0) + t.totalAmountCents,
+      );
+    }
+  }
+  const allPaid = new Map(paid);
+  for (const p of history.paymentRows) {
+    allPaid.set(p.patientId, (allPaid.get(p.patientId) ?? 0) + p.amountCents);
+  }
+  const overpaidWithHistory = [...allPaid]
+    .filter(([id, amount]) => amount > (allBilled.get(id) ?? 0))
+    .map(([id]) => id)
+    .sort();
+  if (
+    overpaidWithHistory.join() !== [...overpaid].sort().join() ||
+    history.appointmentRows.some((a) => a.startsAt >= todayStart) ||
+    history.paymentRows.some(
+      (p) =>
+        (p.paidAt as Date) >= todayStart ||
+        p.amountCents <= 0 ||
+        (p.method === "insurance") !== !!p.insurerId,
+    ) ||
+    history.treatmentRows.some(
+      (t) => (t.performedAt ?? t.createdAt!) >= todayStart,
+    )
+  ) {
+    throw new Error(
+      "Seed: l’historique casse un invariant (avances, aujourd’hui ou paiements)",
+    );
+  }
+
   // SEED_DRY_RUN=1 builds and checks everything, writes nothing.
   const isDryRun = process.env.SEED_DRY_RUN === "1";
-  if (!isDryRun) await db.batch(queries);
+  if (!isDryRun) {
+    await db.batch(queries);
+    await insertHistory(history);
+  }
 
   // Counts and ids only — never a patient name (08-clinical.md §6).
   const statusCounts = appointmentRows.reduce<Record<string, number>>(
@@ -2729,6 +2777,33 @@ async function main() {
     tasks: taskRows.length,
   });
   console.log("Statuts des rendez-vous :", statusCounts);
+  // History volumes and its invariants (prompts/30) — counts only.
+  const historyStatus = history.appointmentRows.reduce<Record<string, number>>(
+    (acc, a) => {
+      acc[a.status!] = (acc[a.status!] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const historyDays = new Set(
+    history.appointmentRows.map((a) => dayKey(a.startsAt)),
+  );
+  console.log("Historique (14 mois) :", {
+    patients: history.patientRows.length,
+    patientsTotal: patientRows.length + history.patientRows.length,
+    rendezVous: history.appointmentRows.length,
+    joursOuverts: historyDays.size,
+    moyenneParJour:
+      Math.round((history.appointmentRows.length / historyDays.size) * 10) / 10,
+    statuts: historyStatus,
+    actes: history.treatmentRows.length,
+    paiements: history.paymentRows.length,
+    paiementsAssurance: history.paymentRows.filter(
+      (p) => p.method === "insurance",
+    ).length,
+    charges: history.expenseRows.length,
+    patientsEnAvance: overpaidWithHistory.length,
+  });
   console.log("Patients en avance (ids) :", overpaid);
   // The dashboard's day — counts only.
   console.log("Tableau de bord, aujourd’hui :", {
@@ -2765,6 +2840,546 @@ async function main() {
     antibioprophylaxie: flagged((h) => !!h.needsAntibioticProphylaxis),
     enceinte: flagged((h) => h.isPregnant === true),
   });
+}
+
+// ── History (prompts/30) ────────────────────────────────────────────────────
+// About 14 months of believable activity BEFORE today, so `/statistiques`
+// reads like a real clinic's year. Its own PRNG stream: not one draw of the
+// seed above changes, so every invariant it guarantees — the dashboard's
+// day, the two «Avance» patients, the documents' numbering — is untouched.
+//
+// - only days strictly before today: no appointment in the future beyond
+//   what the dashboard seed already has, nothing on «today»;
+// - only NEW patients («hist-» ids) carry the history's actes and payments,
+//   and every one ends between 0 and their billable total — so exactly the
+//   two existing «Avance» patients stay in advance (re-verified below);
+// - a slot that overlaps an existing appointment of the same practitioner is
+//   skipped (the exclusion constraint);
+// - deterministic ids («hist-…») and a marker: a run that finds the history
+//   complete writes nothing; a partial one (an interrupted chunked insert)
+//   is cleared and written again. The main batch truncates every table
+//   first, so a full re-run rebuilds the same history.
+const hrand = mulberry32(20261013);
+const hint = (min: number, max: number) =>
+  min + Math.floor(hrand() * (max - min + 1));
+const hchance = (p: number) => hrand() < p;
+const hpick = <T>(items: readonly T[]): T =>
+  items[Math.floor(hrand() * items.length)];
+const hdigits = (n: number) =>
+  Array.from({ length: n }, () => hint(0, 9)).join("");
+function hweighted<T>(entries: readonly (readonly [T, number])[]): T {
+  const total = entries.reduce((sum, [, w]) => sum + w, 0);
+  let r = hrand() * total;
+  for (const [value, w] of entries) {
+    r -= w;
+    if (r < 0) return value;
+  }
+  return entries[entries.length - 1][0];
+}
+
+const HISTORY_DAYS = 425; // ~14 months
+const HISTORY_PATIENTS = 90; // 60 existing + 90 ≈ 150
+/** Patients whose file predates the window: the clinic's existing base. */
+const HISTORY_BASE_PATIENTS = 30;
+const HISTORY_CHUNK = 400; // rows per INSERT — Neon HTTP payload limits
+const historyId = (kind: string, n: number) =>
+  `hist-${kind}-${String(n).padStart(5, "0")}`;
+
+/** Busier mid-morning and late afternoon; a start probability per slot. */
+const startProbability = (minutes: number) => {
+  const hour = Math.floor(minutes / 60);
+  if (hour === 10 || hour === 11 || hour === 16 || hour === 17) return 0.9;
+  if (hour === 9 || hour === 15) return 0.6;
+  return 0.45;
+};
+/** Monday busiest, Saturday quieter (morning only already). */
+const WEEKDAY_INTENSITY: Record<number, number> = {
+  1: 1,
+  2: 0.95,
+  3: 0.85,
+  4: 0.9,
+  5: 0.8,
+  6: 0.75,
+};
+/** A mild summer dip, deepest in August. */
+const monthIntensity = (monthIndex: number) =>
+  monthIndex === 7 ? 0.55 : monthIndex === 6 ? 0.85 : 1;
+
+/** What an appointment type's visit produces, by NGAP code or clinic label. */
+const HISTORY_ACTS: Record<string, readonly (readonly [string, number])[]> = {
+  "Consultation Initiale": [
+    ["C", 6],
+    ["T151", 2],
+    ["T156", 2],
+  ],
+  "Consultation de Retour": [["C", 1]],
+  Détartrage: [["D708", 1]],
+  Soin: [
+    ["D700", 5],
+    ["D701", 4],
+    ["D702", 3],
+    ["D704", 1],
+    ["D705", 1],
+    ["D706", 2],
+  ],
+  Extraction: [
+    ["D713", 4],
+    ["D714", 1],
+    ["D717", 1],
+  ],
+  Chirurgie: [
+    ["D720", 3],
+    ["D725", 2],
+    ["Pose d’implant dentaire", 1],
+  ],
+  Prothèse: [
+    ["D754", 3],
+    ["D900", 2],
+    ["D748", 1],
+    ["Couronne sur implant", 1],
+  ],
+  Orthodontie: [
+    ["D629", 2],
+    ["D626", 1],
+  ],
+};
+
+interface HistoryContext {
+  dentistIds: string[];
+  adminId: string;
+  typeRows: { id: string; def: (typeof APPOINTMENT_TYPE_DEFS)[number] }[];
+  serviceRows: {
+    id: string;
+    def: ServiceDef;
+    row: {
+      label: string;
+      defaultPriceCents: number;
+      nomenclatureCode: string | null;
+    };
+  }[];
+  insurerRows: { id: string; name: string }[];
+  existingAppointments: NewAppointment[];
+  usedNames: Set<string>;
+}
+
+function buildHistory(ctx: HistoryContext) {
+  const todayStart = at(today, "00:00");
+  const firstDay = clinicDay(-HISTORY_DAYS);
+  const closedDays = new Set<string>(HOLIDAYS.map(([md]) => md));
+
+  // Patients — a base before the window, the rest opened month by month.
+  const patientRows: NewPatient[] = [];
+  for (let i = 0; i < HISTORY_PATIENTS; i++) {
+    const gender = hchance(0.52) ? "female" : "male";
+    let firstName: string;
+    let lastName: string;
+    do {
+      firstName = hpick(gender === "female" ? FEMALE_FIRST : MALE_FIRST);
+      lastName = hpick(LAST_NAMES);
+    } while (ctx.usedNames.has(`${firstName} ${lastName}`));
+    ctx.usedNames.add(`${firstName} ${lastName}`);
+
+    let code: string;
+    do {
+      code = Array.from({ length: 4 }, () =>
+        hpick([...SHORT_CODE_ALPHABET]),
+      ).join("");
+    } while (shortCodes.has(code));
+    shortCodes.add(code);
+
+    const opensOn =
+      i < HISTORY_BASE_PATIENTS
+        ? clinicDay(-HISTORY_DAYS - hint(5, 120))
+        : // Spread over the window, slightly skewed towards recent
+          // months: «Nouveaux patients» varies month to month.
+          clinicDay(-Math.floor(HISTORY_DAYS * hrand() ** 1.15) - 1);
+    const openDay = isoWeekday(opensOn) === 7 ? addDays(opensOn, -1) : opensOn;
+    const insurer = hchance(0.7) ? hpick(ctx.insurerRows) : null;
+    const age = hint(18, 78);
+    patientRows.push({
+      id: historyId("p", i + 1),
+      shortCode: code,
+      firstName,
+      lastName,
+      gender,
+      phone: `+212${hpick(["6", "7"])}${hdigits(8)}`,
+      email: hchance(0.4)
+        ? `${slug(firstName)}.${slug(lastName)}${hint(1, 99)}@example.com`
+        : null,
+      birthDate: format(
+        addDays(addMonths(today, -12 * age), -hint(0, 364)),
+        "yyyy-MM-dd",
+      ),
+      address: `${hint(1, 180)}, ${hpick(STREETS)} ${hint(1, 60)}, ${hpick(QUARTIERS)}`,
+      city: hweighted(CITIES),
+      cin: `${hpick(["J", "JA", "JB", "JC", "JH"])}${hdigits(6)}`,
+      insurerId: insurer?.id ?? null,
+      insuranceNumber: insurer
+        ? insurer.name === "CNSS"
+          ? hdigits(9)
+          : insurer.name === "CNOPS"
+            ? `${hdigits(3)}-${hdigits(6)}`
+            : `POL-${hdigits(7)}`
+        : null,
+      isArchived: i % 31 === 30, // a few archived files: still «nouveaux»
+      createdByStaffId: STAFF.secretary.id,
+      createdAt: at(openDay, hhmmOf(hint(9 * 60, 12 * 60))),
+    });
+  }
+
+  // Existing bookings per practitioner — history never overlaps them.
+  const busy = new Map<string, [number, number][]>();
+  for (const a of ctx.existingAppointments) {
+    if (!a.practitionerId) continue;
+    const list = busy.get(a.practitionerId) ?? [];
+    list.push([a.startsAt.getTime(), a.endsAt.getTime()]);
+    busy.set(a.practitionerId, list);
+  }
+  const overlaps = (practitionerId: string, start: Date, end: Date) =>
+    (busy.get(practitionerId) ?? []).some(
+      ([s, e]) => s < end.getTime() && e > start.getTime(),
+    );
+
+  // Appointments — a cursor per session, as the main seed walks them.
+  const appointmentRows: NewAppointment[] = [];
+  for (let offset = -HISTORY_DAYS; offset <= -1; offset++) {
+    const day = clinicDay(offset);
+    const weekday = isoWeekday(day);
+    const sessions = SESSIONS[weekday];
+    if (!sessions || closedDays.has(format(day, "MM-dd"))) continue;
+    const intensity =
+      WEEKDAY_INTENSITY[weekday] * monthIntensity(day.getMonth());
+    const dayStart = at(day, "00:00");
+    const candidates = patientRows.filter(
+      (p) => !p.isArchived && (p.createdAt as Date) < dayStart,
+    );
+    if (candidates.length === 0) continue;
+
+    for (const practitionerId of ctx.dentistIds) {
+      for (const [start, end] of sessions) {
+        let cursor = minutesOf(start);
+        while (cursor + 15 <= minutesOf(end)) {
+          if (!hchance(startProbability(cursor) * intensity)) {
+            cursor += 15;
+            continue;
+          }
+          const type = hweighted(
+            ctx.typeRows.map((t) => [t, t.def.weight] as const),
+          );
+          const duration = type.def.duration;
+          if (cursor + duration > minutesOf(end)) break;
+          const startsAt = at(day, hhmmOf(cursor));
+          const endsAt = at(day, hhmmOf(cursor + duration));
+          if (!overlaps(practitionerId, startsAt, endsAt)) {
+            const patient = hpick(candidates);
+            // Booked up to 20 days ahead, never before the file was opened.
+            const bookedAt = at(addDays(day, -hint(1, 20)), "10:00");
+            appointmentRows.push({
+              id: historyId("a", appointmentRows.length + 1),
+              patientId: patient.id,
+              practitionerId,
+              typeId: type.id,
+              startsAt,
+              endsAt,
+              status: hweighted([
+                ["completed", 85],
+                ["canceled", 8],
+                ["no_show", 7],
+              ] as const),
+              reason: hpick(type.def.reasons),
+              notes: null,
+              createdByStaffId: hpick([STAFF.secretary.id, STAFF.assistant.id]),
+              createdAt:
+                bookedAt < (patient.createdAt as Date)
+                  ? (patient.createdAt as Date)
+                  : bookedAt,
+            });
+          }
+          cursor += duration + hpick([0, 0, 0, 15]);
+        }
+      }
+    }
+  }
+
+  // Actes — one per honoured visit (sometimes two), priced from the catalogue.
+  const serviceFor = (key: string) =>
+    ctx.serviceRows.find((s) => s.def.code === key || s.row.label === key);
+  const typeLabelById = new Map(ctx.typeRows.map((t) => [t.id, t.def.label]));
+  const treatmentRows: NewTreatment[] = [];
+  for (const visit of appointmentRows) {
+    if (visit.status !== "completed") continue;
+    const plan = HISTORY_ACTS[typeLabelById.get(visit.typeId!)!] ?? [["C", 1]];
+    const count = hchance(0.15) ? 2 : 1;
+    for (let n = 0; n < count; n++) {
+      const service = serviceFor(hweighted(plan));
+      if (!service)
+        throw new Error("Seed (historique) : acte inconnu du catalogue");
+      const status = hweighted([
+        ["completed", 92],
+        ["in_progress", 4],
+        ["planned", 2],
+        ["canceled", 2],
+      ] as const);
+      const teeth =
+        service.def.teeth === "none"
+          ? []
+          : service.def.teeth === "wisdom"
+            ? [hpick(["18", "28", "38", "48"])]
+            : service.def.teeth === "anterior"
+              ? [hpick(["11", "12", "13", "21", "22", "23"])]
+              : [hpick(ADULT_TEETH.filter((t) => !t.endsWith("8")))];
+      treatmentRows.push({
+        id: historyId("t", treatmentRows.length + 1),
+        patientId: visit.patientId,
+        appointmentId: status === "planned" ? null : visit.id,
+        serviceId: service.id,
+        practitionerId: visit.practitionerId,
+        label: service.row.label,
+        nomenclatureCode: service.row.nomenclatureCode,
+        teeth,
+        totalAmountCents: service.row.defaultPriceCents,
+        status,
+        performedAt: status === "planned" ? null : visit.startsAt,
+        notes: status === "canceled" ? "Annulé à la demande du patient." : null,
+        createdByStaffId: visit.practitionerId,
+        createdAt: visit.startsAt,
+      });
+    }
+  }
+
+  // Payments — per billable acte, never more than its amount, never today.
+  const paymentRows: NewPayment[] = [];
+  const METHODS = [
+    ["cash", 52],
+    ["card", 28],
+    ["check", 13],
+    ["transfer", 7],
+  ] as const;
+  const referenceFor = (method: NewPayment["method"]) =>
+    method === "check"
+      ? `Chèque n° ${hdigits(7)}`
+      : method === "transfer"
+        ? `VIR-${hdigits(8)}`
+        : method === "card"
+          ? `TPE ${hdigits(6)}`
+          : method === "insurance"
+            ? `Dossier n° ${hdigits(8)}`
+            : null;
+  const beforeToday = (instant: Date, fallback: Date) =>
+    instant < todayStart ? instant : fallback;
+  const pay = (p: Omit<NewPayment, "id" | "reference" | "createdByStaffId">) =>
+    paymentRows.push({
+      id: historyId("pay", paymentRows.length + 1),
+      ...p,
+      reference: referenceFor(p.method),
+      createdByStaffId: STAFF.secretary.id,
+    });
+  const insurerOf = new Map(patientRows.map((p) => [p.id, p.insurerId]));
+  const actsByPatient = new Map<string, NewTreatment[]>();
+  for (const t of treatmentRows) {
+    if (t.status !== "completed" && t.status !== "in_progress") continue;
+    actsByPatient.set(t.patientId, [
+      ...(actsByPatient.get(t.patientId) ?? []),
+      t,
+    ]);
+  }
+  for (const [patientId, acts] of actsByPatient) {
+    // Most accounts are settled; some keep a debt on their latest actes.
+    const profile = hweighted([
+      ["settled", 72],
+      ["partial", 20],
+      ["owing", 8],
+    ] as const);
+    const unpaidTail =
+      profile === "settled" ? 0 : profile === "partial" ? 1 : 2;
+    const settled = acts.slice(0, Math.max(0, acts.length - unpaidTail));
+    for (const act of settled) {
+      const performedAt = act.performedAt as Date;
+      const paidAt = beforeToday(
+        new Date(
+          performedAt.getTime() +
+            (hchance(0.8) ? 30 : hint(1, 15) * 1440) * 60_000,
+        ),
+        performedAt,
+      );
+      const insurerId = insurerOf.get(patientId);
+      if (insurerId && hchance(0.3) && act.totalAmountCents >= 10_000) {
+        const reimbursed = roundDH(act.totalAmountCents * 0.6, 10);
+        pay({
+          patientId,
+          treatmentId: act.id,
+          amountCents: act.totalAmountCents - reimbursed,
+          method: hweighted(METHODS),
+          paidAt,
+        });
+        pay({
+          patientId,
+          treatmentId: act.id,
+          insurerId,
+          amountCents: reimbursed,
+          method: "insurance",
+          paidAt: beforeToday(addDays(paidAt, hint(10, 40)), paidAt),
+        });
+      } else {
+        pay({
+          patientId,
+          treatmentId: act.id,
+          amountCents: act.totalAmountCents,
+          method: hweighted(METHODS),
+          paidAt,
+        });
+      }
+    }
+    if (profile === "partial") {
+      // A deposit on the last, unsettled acte — below its amount.
+      const open = acts[acts.length - 1];
+      const deposit = roundDH(open.totalAmountCents * 0.4, 50);
+      if (deposit > 0) {
+        pay({
+          patientId,
+          amountCents: deposit,
+          method: "cash",
+          paidAt: open.performedAt as Date,
+          notes: "Acompte",
+        });
+      }
+    }
+  }
+
+  // Charges — the months before the three the main seed already covers.
+  const expenseRows: (typeof expenses.$inferInsert)[] = [];
+  const monthsBack = Math.ceil(HISTORY_DAYS / 30);
+  for (let m = 3; m <= monthsBack; m++) {
+    const month = startOfMonth(addMonths(today, -m));
+    if (addMonths(month, 1) <= firstDay) continue;
+    const lastDay = getDaysInMonth(month);
+    const spend = (
+      dayOfMonth: number,
+      row: Pick<
+        typeof expenses.$inferInsert,
+        "label" | "category" | "amountCents" | "supplier"
+      >,
+    ) =>
+      expenseRows.push({
+        id: historyId("e", expenseRows.length + 1),
+        ...row,
+        spentAt: clinicInstant(
+          dayKey(addDays(month, Math.min(dayOfMonth, lastDay) - 1)),
+        ),
+        createdByStaffId: ctx.adminId,
+      });
+    spend(2, {
+      label: "Loyer du cabinet",
+      category: "rent",
+      amountCents: 800000,
+      supplier: "SCI Résidence Souss",
+    });
+    spend(28, {
+      label: "Salaire assistante dentaire",
+      category: "salaries",
+      amountCents: 450000,
+      supplier: null,
+    });
+    spend(30, {
+      label: "Salaire secrétaire médicale",
+      category: "salaries",
+      amountCents: 400000,
+      supplier: null,
+    });
+    spend(10, {
+      label: "Cotisations CNSS employeur",
+      category: "taxes",
+      amountCents: hint(170000, 185000),
+      supplier: "CNSS",
+    });
+    spend(12, {
+      label: "Facture d’électricité",
+      category: "utilities",
+      amountCents: hint(90000, 140000),
+      supplier: "ONEE",
+    });
+    spend(12, {
+      label: "Facture d’eau",
+      category: "utilities",
+      amountCents: hint(15000, 25000),
+      supplier: "RAMSA",
+    });
+    spend(hint(3, 8), {
+      label: "Consommables (gants, masques, composites)",
+      category: "supplies",
+      amountCents: hint(250000, 420000),
+      supplier: "Dentaire Sud Distribution",
+    });
+    spend(hint(18, 25), {
+      label: "Travaux de prothèse",
+      category: "lab",
+      amountCents: hint(180000, 520000),
+      supplier: "Laboratoire Atlas Prothèse",
+    });
+    if (hchance(0.3)) {
+      spend(hint(5, 25), {
+        label: "Maintenance fauteuil et compresseur",
+        category: "maintenance",
+        amountCents: hint(60000, 150000),
+        supplier: "Technident Agadir",
+      });
+    }
+  }
+
+  return {
+    patientRows,
+    appointmentRows,
+    treatmentRows,
+    paymentRows,
+    expenseRows,
+  };
+}
+
+type History = ReturnType<typeof buildHistory>;
+
+/** The marker: the LAST row written. Present ⇒ the history is complete. */
+const historyMarker = (history: History) => history.expenseRows.at(-1)!.id!;
+
+async function insertHistory(history: History) {
+  const marker = historyMarker(history);
+  const [complete] = await db
+    .select({ id: expenses.id })
+    .from(expenses)
+    .where(eq(expenses.id, marker));
+  if (complete) {
+    console.log(
+      "Historique déjà présent (marqueur trouvé) : rien n’est écrit.",
+    );
+    return;
+  }
+  // A partial history (an interrupted run): cleared, then written whole.
+  await db.batch([
+    db.execute(sql`DELETE FROM ${payments} WHERE ${payments.id} LIKE 'hist-%'`),
+    db.execute(
+      sql`DELETE FROM ${treatments} WHERE ${treatments.id} LIKE 'hist-%'`,
+    ),
+    db.execute(
+      sql`DELETE FROM ${appointments} WHERE ${appointments.id} LIKE 'hist-%'`,
+    ),
+    db.execute(sql`DELETE FROM ${expenses} WHERE ${expenses.id} LIKE 'hist-%'`),
+    db.execute(sql`DELETE FROM ${patients} WHERE ${patients.id} LIKE 'hist-%'`),
+  ]);
+
+  const chunks = <T>(rows: T[]) =>
+    Array.from({ length: Math.ceil(rows.length / HISTORY_CHUNK) }, (_, i) =>
+      rows.slice(i * HISTORY_CHUNK, (i + 1) * HISTORY_CHUNK),
+    );
+  // In foreign-key order; the expenses — and the marker, last of them — end.
+  for (const rows of chunks(history.patientRows))
+    await db.insert(patients).values(rows);
+  for (const rows of chunks(history.appointmentRows))
+    await db.insert(appointments).values(rows);
+  for (const rows of chunks(history.treatmentRows))
+    await db.insert(treatments).values(rows);
+  for (const rows of chunks(history.paymentRows))
+    await db.insert(payments).values(rows);
+  for (const rows of chunks(history.expenseRows))
+    await db.insert(expenses).values(rows);
 }
 
 main().catch((error: unknown) => {

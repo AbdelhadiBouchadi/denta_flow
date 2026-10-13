@@ -11,7 +11,9 @@ import { useTRPC } from "@/trpc/client";
  *
  * - `expenses.pathFilter()` — `/charges` pages, the summary strip, `getOne`;
  * - `dashboard.pathFilter()` — «Charges» and «Bénéfice net» in the admin
- *   block, so the net moves without a reload.
+ *   block, so the net moves without a reload;
+ * - `statistics.pathFilter()` — the résultat card and «Encaissé et
+ *   charges» on `/statistiques`.
  *
  * No `setQueryData`, no optimistic update on money.
  */
@@ -23,6 +25,7 @@ export const useInvalidateExpenses = () => {
     await Promise.all([
       queryClient.invalidateQueries(trpc.expenses.pathFilter()),
       queryClient.invalidateQueries(trpc.dashboard.pathFilter()),
+      queryClient.invalidateQueries(trpc.statistics.pathFilter()),
     ]);
   }, [queryClient, trpc]);
 };
