@@ -30,10 +30,11 @@ interface Props {
  */
 const PatientIdPage = async ({ params, searchParams }: Props) => {
   const { patientId } = await params;
-  // The «Imagerie» tab's kind filter. The dossier composes other slices'
-  // tabs, so — like /parametres — it reads that slice's own loader: the
-  // gallery's query key is built from the same parsers on both sides.
-  const { imageKind } = await loadImagingSearchParams(searchParams);
+  // The «Imagerie» tab's kind and tooth filters. The dossier composes other
+  // slices' tabs, so — like /parametres — it reads that slice's own loader:
+  // the gallery's query key is built from the same parsers on both sides.
+  // (`imageGroup` is a client-side view of the rows: not part of any key.)
+  const { imageKind, imageTooth } = await loadImagingSearchParams(searchParams);
 
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/connexion");
@@ -77,7 +78,15 @@ const PatientIdPage = async ({ params, searchParams }: Props) => {
   // read it: a secretary's prefetch would only stream a FORBIDDEN.
   if (canReadImaging(session.user.role)) {
     void queryClient.prefetchQuery(
-      trpc.imaging.getManyByPatient.queryOptions({ patientId, kind: imageKind }),
+      trpc.imaging.getManyByPatient.queryOptions({
+        patientId,
+        kind: imageKind,
+        tooth: imageTooth,
+      }),
+    );
+    // Its chips' counts.
+    void queryClient.prefetchQuery(
+      trpc.imaging.getCountsByPatient.queryOptions({ patientId }),
     );
   }
   // Read by the edit dialog's form, which the header can open at any moment.

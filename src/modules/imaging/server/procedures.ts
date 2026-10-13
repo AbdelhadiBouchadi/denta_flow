@@ -1,7 +1,7 @@
 import "server-only";
 
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, arrayContains, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 import { db } from "@/database";
@@ -24,8 +24,10 @@ import {
 } from "@/trpc/init";
 import {
   IMAGE_MAX_BYTES,
+  IMAGING_ACTIVITY_COPY,
   IMAGING_LIST_CAP,
   IMAGING_SERVER_ERRORS as E,
+  PATIENT_FILE_KIND_VALUES,
   THUMBNAIL_CONTENT_TYPE,
   THUMBNAIL_MAX_BYTES,
 } from "../constants";
@@ -37,6 +39,7 @@ import {
 } from "../rules";
 import {
   imagingByPatientSchema,
+  imagingCountsSchema,
   imagingIdSchema,
   imagingRegisterSchema,
   imagingUpdateSchema,
@@ -91,6 +94,7 @@ const loadFile = async (id: string) => {
     .select({
       id: patientFiles.id,
       kind: patientFiles.kind,
+      teeth: patientFiles.teeth,
       patientId: patientFiles.patientId,
       firstName: patients.firstName,
       lastName: patients.lastName,
@@ -109,6 +113,10 @@ const loadFile = async (id: string) => {
  * microsecond precision, the client's token a millisecond Date — the column
  * is truncated to the token's precision so the comparison is exact.
  */
+/** Same set of teeth? Both sides are stored / validated sorted. */
+const sameTeeth = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((tooth, index) => tooth === b[index]);
+
 const versionMatches = (expectedUpdatedAt: Date) =>
   sql`date_trunc('milliseconds', ${patientFiles.updatedAt}) = ${expectedUpdatedAt.toISOString()}::timestamp`;
 
@@ -182,8 +190,11 @@ export const imagingRouter = createTRPCRouter({
   /**
    * The dossier's gallery. Excludes soft-deleted rows, capped at
    * IMAGING_LIST_CAP, newest clinical date first then id for a stable order.
-   * `storageConfigured` lets the tab show «stockage non configuré» instead
-   * of a grid of broken images; the rows themselves are database-only.
+   * `tooth` keeps the images TAGGED with that tooth (`teeth @> '{36}'`), so an
+   * untagged image never matches. Grouping is done by the client from these
+   * already-ordered rows. `storageConfigured` lets the tab show «stockage
+   * non configuré» instead of a grid of broken images; the rows themselves
+   * are database-only.
    */
   getManyByPatient: protectedProcedure
     .input(imagingByPatientSchema)
@@ -194,6 +205,7 @@ export const imagingRouter = createTRPCRouter({
         eq(patientFiles.patientId, input.patientId),
         isNull(patientFiles.deletedAt),
         input.kind ? eq(patientFiles.kind, input.kind) : undefined,
+        input.tooth ? arrayContains(patientFiles.teeth, [input.tooth]) : undefined,
       );
 
       const [items, total] = await Promise.all([
@@ -203,6 +215,7 @@ export const imagingRouter = createTRPCRouter({
             kind: patientFiles.kind,
             takenAt: patientFiles.takenAt,
             notes: patientFiles.notes,
+            teeth: patientFiles.teeth,
             width: patientFiles.width,
             height: patientFiles.height,
             sizeBytes: patientFiles.sizeBytes,
@@ -224,6 +237,38 @@ export const imagingRouter = createTRPCRouter({
         items,
         total,
         storageConfigured: isPrivateStorageConfigured(),
+      };
+    }),
+
+  /**
+   * The chips' counts (prompts/32, decision 3): live images of the patient,
+   * in total and per kind, whatever filter is active. One GROUP BY; a kind
+   * with no image reads 0, so the chips never miss a key.
+   */
+  getCountsByPatient: protectedProcedure
+    .input(imagingCountsSchema)
+    .query(async ({ input, ctx }) => {
+      forbidden(imagingReadDenial(ctx.auth.user.role));
+
+      const rows = await db
+        .select({ kind: patientFiles.kind, count: count() })
+        .from(patientFiles)
+        .where(
+          and(
+            eq(patientFiles.patientId, input.patientId),
+            isNull(patientFiles.deletedAt),
+          ),
+        )
+        .groupBy(patientFiles.kind);
+
+      const byKind = Object.fromEntries(
+        PATIENT_FILE_KIND_VALUES.map((kind) => [kind, 0]),
+      ) as Record<PatientFileKind, number>;
+      for (const row of rows) byKind[row.kind as PatientFileKind] = row.count;
+
+      return {
+        total: rows.reduce((sum, row) => sum + row.count, 0),
+        byKind,
       };
     }),
 
@@ -268,6 +313,7 @@ export const imagingRouter = createTRPCRouter({
             originalName: input.original.name,
             takenAt: clinicInstant(input.takenDate),
             notes: input.notes,
+            teeth: input.teeth,
             uploadedByStaffId: staffId,
           }),
           logActivity({
@@ -292,9 +338,10 @@ export const imagingRouter = createTRPCRouter({
     }),
 
   /**
-   * Kind, date and note — never the file. A stale `expectedUpdatedAt` is a
-   * CONFLICT. The guarded activity line locks the row first, so the line and
-   * the change land together or not at all.
+   * Kind, date, note and teeth — never the file. An absent field is left as
+   * stored. A stale `expectedUpdatedAt` is a CONFLICT. The guarded activity
+   * line locks the row first, so the line and the change land together or
+   * not at all; it names the new teeth when they changed.
    */
   update: protectedProcedure
     .input(imagingUpdateSchema)
@@ -314,6 +361,12 @@ export const imagingRouter = createTRPCRouter({
         isNull(patientFiles.deletedAt),
         versionMatches(input.expectedUpdatedAt),
       );
+      const kind = input.kind ?? (file.kind as PatientFileKind);
+      const teethChanged =
+        input.teeth !== undefined && !sameTeeth(input.teeth, file.teeth);
+      const summary =
+        PATIENT_FILE_SUMMARIES.updated(formatPatientName(file), kind) +
+        (teethChanged ? IMAGING_ACTIVITY_COPY.teethChanged(input.teeth!) : "");
       const [, [updated]] = await db.batch([
         logActivity(
           {
@@ -321,10 +374,7 @@ export const imagingRouter = createTRPCRouter({
             entityId: input.id,
             action: ActivityAction.Updated,
             patientId: file.patientId,
-            summary: PATIENT_FILE_SUMMARIES.updated(
-              formatPatientName(file),
-              input.kind,
-            ),
+            summary,
             staffId,
           },
           { table: patientFiles, where: guarded },
@@ -333,8 +383,12 @@ export const imagingRouter = createTRPCRouter({
           .update(patientFiles)
           .set({
             kind: input.kind,
-            takenAt: clinicInstant(input.takenDate),
+            takenAt:
+              input.takenDate === undefined
+                ? undefined
+                : clinicInstant(input.takenDate),
             notes: input.notes,
+            teeth: input.teeth,
             updatedAt: new Date(),
           })
           .where(guarded)

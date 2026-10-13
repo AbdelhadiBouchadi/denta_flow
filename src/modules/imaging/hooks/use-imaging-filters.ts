@@ -2,7 +2,12 @@
 
 import { parseAsStringLiteral, useQueryStates } from "nuqs";
 
-import { PATIENT_FILE_KIND_VALUES } from "../constants";
+import { ALL_TEETH } from "@/modules/odontogram/constants";
+import {
+  DEFAULT_IMAGING_GROUP_BY,
+  IMAGING_GROUP_BY_VALUES,
+  PATIENT_FILE_KIND_VALUES,
+} from "../constants";
 
 /**
  * CLIENT half of the «Imagerie» tab's URL state — it MIRRORS params.ts
@@ -14,4 +19,10 @@ export const useImagingFilters = () =>
     imageKind: parseAsStringLiteral(PATIENT_FILE_KIND_VALUES).withOptions({
       clearOnDefault: true,
     }),
+    imageTooth: parseAsStringLiteral(ALL_TEETH).withOptions({
+      clearOnDefault: true,
+    }),
+    imageGroup: parseAsStringLiteral(IMAGING_GROUP_BY_VALUES)
+      .withDefault(DEFAULT_IMAGING_GROUP_BY)
+      .withOptions({ clearOnDefault: true }),
   });

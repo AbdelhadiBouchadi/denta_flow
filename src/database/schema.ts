@@ -482,6 +482,10 @@ export const patientFiles = pgTable("patient_files", {
   originalName: text("original_name").notNull(),
   takenAt: timestamp("taken_at", { withTimezone: true }).notNull(),
   notes: text("notes"),
+  // FDI codes the image shows (prompts/32), validated by the treatments' FDI
+  // schema, deduplicated and sorted. A native array, not jsonb: the gallery's
+  // «Dent» filter is an SQL `@>`. Empty for a panoramique, and by default.
+  teeth: text("teeth").array().notNull().default(sql`'{}'::text[]`),
   uploadedByStaffId: text("uploaded_by_staff_id").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

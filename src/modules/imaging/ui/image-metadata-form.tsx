@@ -11,6 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { getErrorMessage } from "@/lib/errors";
 import { toClinicDate } from "@/lib/time";
+import { ToothSelect } from "@/modules/treatments/ui/tooth-select";
 import { useTRPC } from "@/trpc/client";
 import { IMAGING_COPY as COPY } from "../constants";
 import { useInvalidateImaging } from "../hooks/use-invalidate-imaging";
@@ -28,7 +29,7 @@ interface ImageMetadataFormProps {
 }
 
 /**
- * The viewer's «Modifier»: kind, date and note — never the file. The
+ * The viewer's «Modifier»: kind, date, teeth and note — never the file. The
  * version token is the `updatedAt` of the row the viewer shows; someone
  * else's save since then is a CONFLICT, answered by a reload of the list
  * (the viewer then shows the saved version) and a French toast.
@@ -43,6 +44,7 @@ export const ImageMetadataForm = ({ file, onDone }: ImageMetadataFormProps) => {
       kind: file.kind as PatientFileKind,
       takenDate: toClinicDate(file.takenAt),
       notes: file.notes ?? "",
+      teeth: file.teeth,
     },
   });
 
@@ -103,6 +105,25 @@ export const ImageMetadataForm = ({ file, onDone }: ImageMetadataFormProps) => {
                 onChange={field.onChange}
                 disabled={isPending}
                 invalid={fieldState.invalid}
+              />
+              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+            </Field>
+          )}
+        />
+        <Controller
+          control={form.control}
+          name="teeth"
+          render={({ field, fieldState }) => (
+            <Field data-invalid={fieldState.invalid}>
+              <FieldLabel htmlFor="image-teeth">{COPY.teeth}</FieldLabel>
+              {/* The full grid: the side panel is wide enough, and editing
+                  teeth is this form's main job on a rétro-alvéolaire. */}
+              <ToothSelect
+                id="image-teeth"
+                value={field.value ?? []}
+                onChange={field.onChange}
+                disabled={isPending}
+                aria-invalid={fieldState.invalid}
               />
               {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
             </Field>
