@@ -19,7 +19,7 @@ export type ActivityStaffOption = ActivityOutputs["getStaff"][number];
 /**
  * What a row is about. Stored as text in `activity_log.entity_type` — values
  * written before branch 27 use the same four words; `odontogram` came with
- * branch 28; the three catalogue entities with branch 29.
+ * branch 28; the three catalogue entities with branch 29; `patient_file` with branch 31.
  */
 export enum ActivityEntityType {
   Appointment = "appointment",
@@ -30,6 +30,8 @@ export enum ActivityEntityType {
   Medication = "medication",
   PrescriptionPack = "prescription_pack",
   CertificateTemplate = "certificate_template",
+  /** A radiograph or photo of the dossier's «Imagerie» tab (branch 31). */
+  PatientFile = "patient_file",
 }
 
 /** What happened to it. Stored as text in `activity_log.action`. */

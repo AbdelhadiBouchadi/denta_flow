@@ -6,6 +6,8 @@ import { toClinicTime } from "@/lib/time";
 import { APPOINTMENT_STATUS_LABELS } from "@/modules/appointments/constants";
 import type { AppointmentStatus } from "@/modules/appointments/types";
 import { DOCUMENT_TYPE_LABELS } from "@/modules/documents/constants";
+import { PATIENT_FILE_KIND_LABELS } from "@/modules/imaging/constants";
+import type { PatientFileKind } from "@/modules/imaging/types";
 import {
   DocumentType,
   type GeneratedDocumentType,
@@ -130,6 +132,22 @@ export const ODONTOGRAM_SUMMARIES = {
   updated: (patient: string) => `Odontogramme mis à jour — ${patient}.`,
   reset: (patient: string) =>
     `Odontogramme réinitialisé (situation initiale effacée) — ${patient}.`,
+} as const;
+
+// ── Imagerie ────────────────────────────────────────────────────────────────
+// The kind and the patient. Never the note (free text, possibly clinical),
+// never the original filename, never a pathname.
+
+const imageOf = (kind: PatientFileKind) =>
+  `Image « ${PATIENT_FILE_KIND_LABELS[kind]} »`;
+
+export const PATIENT_FILE_SUMMARIES = {
+  added: (patient: string, kind: PatientFileKind) =>
+    `${imageOf(kind)} ajoutée au dossier ${ofPatient(patient)}.`,
+  updated: (patient: string, kind: PatientFileKind) =>
+    `${imageOf(kind)} du dossier ${ofPatient(patient)} modifiée.`,
+  removed: (patient: string, kind: PatientFileKind) =>
+    `${imageOf(kind)} retirée du dossier ${ofPatient(patient)}.`,
 } as const;
 
 // ── Documents ───────────────────────────────────────────────────────────────

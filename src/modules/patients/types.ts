@@ -50,6 +50,7 @@ export enum PatientTab {
   Treatments = "treatments",
   Payments = "payments",
   Documents = "documents",
+  Imaging = "imaging",
 }
 
 /**

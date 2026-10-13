@@ -105,6 +105,10 @@ export const smokingStatus     = pgEnum("smoking_status", ["none", "occasional",
 export const bloodType         = pgEnum("blood_type", [
   "a_pos", "a_neg", "b_pos", "b_neg", "ab_pos", "ab_neg", "o_pos", "o_neg",
 ]);
+// English keys (AGENTS.md §5); the French labels live in the imaging slice.
+export const patientFileKind   = pgEnum("patient_file_kind", [
+  "panoramic", "periapical", "cephalometric", "photo", "other",
+]);
 
 // ── Clinic settings: exactly one row, id = "clinic" ──────────────────────────
 export const clinicSettings = pgTable("clinic_settings", {
@@ -455,6 +459,41 @@ export const odontogramCharts = pgTable("odontogram_charts", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [uniqueIndex("odontogram_patient_dentition_idx").on(t.patientId, t.dentition)]);
+
+// ── Patient files — radiographs and photos (prompts/31) ─────────────────────
+// The bytes live in the PRIVATE Blob store (src/lib/storage/private.ts); the
+// row holds the pathname, never a URL, and no procedure ever returns it — the
+// browser reads `/api/files/{id}`, which checks the session on every request.
+// `patientId` RESTRICTS: an image is clinical evidence, and a later branch
+// (céphalométrie) references files by id. «Supprimer» is a soft delete
+// (`deletedAt`), and the blob is kept.
+// `takenAt` is a clinic DATE stored as the clinic-midnight instant of that
+// day, like `expenses.spentAt`. `originalName` is a display label only.
+export const patientFiles = pgTable("patient_files", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  patientId: text("patient_id").notNull().references(() => patients.id, { onDelete: "restrict" }),
+  kind: patientFileKind("kind").notNull(),
+  blobPathname: text("blob_pathname").notNull(),
+  thumbPathname: text("thumb_pathname"),             // null ⇒ the gallery shows a placeholder
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  originalName: text("original_name").notNull(),
+  takenAt: timestamp("taken_at", { withTimezone: true }).notNull(),
+  notes: text("notes"),
+  uploadedByStaffId: text("uploaded_by_staff_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+  deletedByStaffId: text("deleted_by_staff_id").references(() => user.id, { onDelete: "set null" }),
+}, (t) => [
+  uniqueIndex("patient_files_blob_pathname_idx").on(t.blobPathname),
+  uniqueIndex("patient_files_thumb_pathname_idx").on(t.thumbPathname),
+  index("patient_files_patient_taken_at_idx").on(t.patientId, t.deletedAt, t.takenAt.desc()),
+  check("patient_files_size_positive", sql`${t.sizeBytes} > 0`),
+  check("patient_files_dimensions_range", sql`${t.width} BETWEEN 64 AND 12000 AND ${t.height} BETWEEN 64 AND 12000`),
+]);
 
 // ── Tasks («liste des tâches») — clinic-wide, not per-user ──────────────────
 export const tasks = pgTable("tasks", {
