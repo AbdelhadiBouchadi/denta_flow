@@ -3,6 +3,7 @@ import {
   CreditCardIcon,
   FileTextIcon,
   HeartPulseIcon,
+  ImageIcon,
   SmileIcon,
   StethoscopeIcon,
   UserIcon,
@@ -11,6 +12,7 @@ import {
 
 import type { StatusTone } from "@/components/shared/status-badge";
 import { AppointmentStatus } from "@/modules/appointments/types";
+import { IMAGING_COPY } from "@/modules/imaging/constants";
 import { ODONTOGRAM_COPY } from "@/modules/odontogram/constants";
 import {
   BloodType,
@@ -81,6 +83,8 @@ export const PATIENT_TABS: readonly PatientTabDefinition[] = [
   { value: PatientTab.Treatments, label: "Actes", icon: StethoscopeIcon },
   { value: PatientTab.Payments, label: "Paiements", icon: CreditCardIcon },
   { value: PatientTab.Documents, label: "Documents", icon: FileTextIcon },
+  // Hidden from the secretary by the view (prompts/31, decision 3).
+  { value: PatientTab.Imaging, label: IMAGING_COPY.tabLabel, icon: ImageIcon },
 ] as const;
 
 /** The literal union the nuqs parser accepts, derived from the tab list. */
@@ -92,6 +96,7 @@ export const PATIENT_TAB_VALUES = [
   PatientTab.Treatments,
   PatientTab.Payments,
   PatientTab.Documents,
+  PatientTab.Imaging,
 ] as const;
 
 export const DEFAULT_PATIENT_TAB = PatientTab.Informations;

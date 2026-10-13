@@ -20,6 +20,7 @@ export const ACTIVITY_ENTITY_TONES: Record<ActivityEntityType, StatusTone> = {
   [ActivityEntityType.Medication]: "neutral",
   [ActivityEntityType.PrescriptionPack]: "neutral",
   [ActivityEntityType.CertificateTemplate]: "neutral",
+  [ActivityEntityType.PatientFile]: "info",
 };
 
 /** Screen-reader name of each icon. */
@@ -32,6 +33,7 @@ export const ACTIVITY_ENTITY_LABELS: Record<ActivityEntityType, string> = {
   [ActivityEntityType.Medication]: "Médicament",
   [ActivityEntityType.PrescriptionPack]: "Pack d’ordonnance",
   [ActivityEntityType.CertificateTemplate]: "Modèle de certificat",
+  [ActivityEntityType.PatientFile]: "Image",
 };
 
 export const ACTIVITY_COPY = {

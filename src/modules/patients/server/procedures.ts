@@ -172,8 +172,10 @@ const MAX_SHORT_CODE_ATTEMPTS = 6;
 const UNIQUE_VIOLATION = "23505";
 const FOREIGN_KEY_VIOLATION = "23503";
 const CHECK_VIOLATION = "23514";
+const RESTRICT_VIOLATION = "23001";
 
 const MEDICAL_HISTORY_PATIENT_FK = "medical_histories_patient_id_patients_id_fk";
+const PATIENT_FILES_PATIENT_FK = "patient_files_patient_id_patients_id_fk";
 
 interface PostgresErrorShape {
   code?: string;
@@ -548,10 +550,31 @@ export const patientsRouter = createTRPCRouter({
       // payments, appointments, documents, patient_tags and odontogram_charts
       // remove exactly the dependent rows — a manual multi-table delete would
       // only be a second, drifting copy of that list.
-      const [removed] = await db
+      //
+      // `patient_files` alone RESTRICTS (prompts/31): an image is clinical
+      // evidence a later branch references by id, so a patient with images
+      // cannot be erased — only archived.
+      const removed = await db
         .delete(patients)
         .where(eq(patients.id, input.id))
-        .returning();
+        .returning()
+        .then(([row]) => row)
+        .catch((error: unknown) => {
+          const pg = postgresError(error);
+          // ON DELETE RESTRICT raises 23001, not 23503.
+          if (
+            (pg?.code === RESTRICT_VIOLATION ||
+              pg?.code === FOREIGN_KEY_VIOLATION) &&
+            pg.constraint === PATIENT_FILES_PATIENT_FK
+          ) {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message:
+                "Ce patient a des images dans son dossier : il ne peut pas être supprimé. Archivez-le plutôt.",
+            });
+          }
+          throw error;
+        });
 
       if (!removed) {
         throw new TRPCError({

@@ -6,6 +6,7 @@ import { clinicRouter } from "@/modules/clinic/server/procedures";
 import { dashboardRouter } from "@/modules/dashboard/server/procedures";
 import { documentsRouter } from "@/modules/documents/server/procedures";
 import { expensesRouter } from "@/modules/expenses/server/procedures";
+import { imagingRouter } from "@/modules/imaging/server/procedures";
 import { insurersRouter } from "@/modules/insurers/server/procedures";
 import { odontogramRouter } from "@/modules/odontogram/server/procedures";
 import { patientsRouter } from "@/modules/patients/server/procedures";
@@ -54,6 +55,7 @@ export const appRouter = createTRPCRouter({
   prescriptionPacks: prescriptionPacksRouter,
   certificateTemplates: certificateTemplatesRouter,
   statistics: statisticsRouter,
+  imaging: imagingRouter,
 });
 
 export type AppRouter = typeof appRouter;

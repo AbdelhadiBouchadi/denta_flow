@@ -4,8 +4,11 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
+import type { SearchParams } from "nuqs/server";
 
 import { auth } from "@/lib/auth";
+import { loadSearchParams as loadImagingSearchParams } from "@/modules/imaging/params";
+import { canReadImaging } from "@/modules/imaging/rules";
 import PatientIdView, {
   PatientIdViewError,
   PatientIdViewLoading,
@@ -18,14 +21,19 @@ export const metadata: Metadata = {
 
 interface Props {
   params: Promise<{ patientId: string }>;
+  searchParams: Promise<SearchParams>;
 }
 
 /**
  * The dossier's tabs are nuqs state on this one route, so one session read and
  * one prefetch block cover all of them (04-hydration.md §2).
  */
-const PatientIdPage = async ({ params }: Props) => {
+const PatientIdPage = async ({ params, searchParams }: Props) => {
   const { patientId } = await params;
+  // The «Imagerie» tab's kind filter. The dossier composes other slices'
+  // tabs, so — like /parametres — it reads that slice's own loader: the
+  // gallery's query key is built from the same parsers on both sides.
+  const { imageKind } = await loadImagingSearchParams(searchParams);
 
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/connexion");
@@ -65,6 +73,13 @@ const PatientIdPage = async ({ params }: Props) => {
   void queryClient.prefetchQuery(
     trpc.documents.countByPatient.queryOptions({ patientId }),
   );
+  // The «Imagerie» tab, for the same reason — only for the roles that may
+  // read it: a secretary's prefetch would only stream a FORBIDDEN.
+  if (canReadImaging(session.user.role)) {
+    void queryClient.prefetchQuery(
+      trpc.imaging.getManyByPatient.queryOptions({ patientId, kind: imageKind }),
+    );
+  }
   // Read by the edit dialog's form, which the header can open at any moment.
   void queryClient.prefetchQuery(trpc.tags.getMany.queryOptions());
   void queryClient.prefetchQuery(trpc.insurers.getMany.queryOptions());

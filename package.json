@@ -57,6 +57,7 @@
     "react-hook-form": "^7.88.0",
     "react-is": "19.2.8",
     "react-resizable-panels": "^4.12.4",
+    "react-zoom-pan-pinch": "3.7.0",
     "recharts": "3.8.0",
     "server-only": "^0.0.1",
     "shadcn": "^4.21.0",

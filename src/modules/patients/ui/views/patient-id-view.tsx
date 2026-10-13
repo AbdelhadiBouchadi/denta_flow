@@ -7,6 +7,9 @@ import ErrorState from "@/components/shared/error-state";
 import LoadingState from "@/components/shared/loading-state";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { authClient } from "@/lib/auth-client";
+import { canReadImaging } from "@/modules/imaging/rules";
+import PatientImaging from "@/modules/imaging/ui/patient-imaging";
 import PatientOdontogram from "@/modules/odontogram/ui/patient-odontogram";
 import { useTRPC } from "@/trpc/client";
 import { PATIENT_TABS } from "../../constants";
@@ -54,6 +57,15 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
     trpc.patients.getOne.queryOptions({ id: patientId }),
   );
 
+  // «Imagerie» is not the secretary's (prompts/31, decision 3): its tab is
+  // hidden — a courtesy, the procedures and the file route refuse anyway —
+  // and stays hidden until the session says otherwise.
+  const { data: session } = authClient.useSession();
+  const showImaging = canReadImaging(session?.user.role);
+  const tabs = PATIENT_TABS.filter(
+    ({ value }) => value !== PatientTab.Imaging || showImaging,
+  );
+
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-4 px-4 py-6 md:px-8">
       <PatientBreadcrumb patientName={formatPatientName(patient)} />
@@ -91,7 +103,7 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
               variant="line"
               className="w-max min-w-full justify-start rounded-none border-b bg-transparent p-0 px-4 group-data-horizontal/tabs:h-auto md:px-6"
             >
-              {PATIENT_TABS.map(({ value, label, icon: Icon }) => (
+              {tabs.map(({ value, label, icon: Icon }) => (
                 <TabsTrigger
                   key={value}
                   value={value}
@@ -141,6 +153,14 @@ const PatientIdView = ({ patientId }: PatientIdViewProps) => {
                 the «Actes» tab's prefetched query. */}
             <TabsContent value={PatientTab.Documents}>
               <PatientDocuments patient={patient} />
+            </TabsContent>
+
+            {/* Its own query, prefetched by the page for the roles that may
+                read it; the gallery has its own Suspense and ErrorBoundary.
+                Rendered for any role: a secretary following a deep link
+                reads why, instead of an empty panel. */}
+            <TabsContent value={PatientTab.Imaging}>
+              <PatientImaging patient={patient} />
             </TabsContent>
           </div>
         </Tabs>
