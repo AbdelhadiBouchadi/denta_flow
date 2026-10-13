@@ -268,7 +268,7 @@ const ImagingGallery = ({ patient, canWrite, canRemove }: ImagingGalleryProps) =
             variant="outline"
             pressed={selecting}
             onPressedChange={(pressed) => (pressed ? setSelecting(true) : stopSelecting())}
-            disabled={data.items.length < IMAGING_COMPARE_MAX}
+            disabled={data.items.length < IMAGING_COMPARE_MAX && !selecting}
             aria-label={selecting ? COPY.compareCancel : COPY.compare}
           >
             <ColumnsIcon />
