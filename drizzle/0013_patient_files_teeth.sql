@@ -1,0 +1,1 @@
+ALTER TABLE "patient_files" ADD COLUMN "teeth" text[] DEFAULT '{}'::text[] NOT NULL;

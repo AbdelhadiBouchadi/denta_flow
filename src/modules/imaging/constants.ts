@@ -1,6 +1,6 @@
 import type { StatusTone } from "@/components/shared/status-badge";
 import { StaffRole } from "@/modules/staff/types";
-import { ImageContentType, PatientFileKind } from "./types";
+import { ImageContentType, ImagingGroupBy, PatientFileKind } from "./types";
 
 /**
  * The only place French UI copy for this slice exists (06-ui.md §10), and
@@ -53,6 +53,37 @@ export const PATIENT_FILE_KIND_OPTIONS = PATIENT_FILE_KIND_VALUES.map(
   (value) => ({ value, label: PATIENT_FILE_KIND_LABELS[value] }),
 );
 
+/**
+ * The fixed order of the «Par type» groups, of the kinds inside a «Par date»
+ * group and of the chips (prompts/32, decision 2). Radiographs first, from
+ * the widest view to the narrowest, then photos.
+ */
+export const PATIENT_FILE_KIND_ORDER: readonly PatientFileKind[] =
+  PATIENT_FILE_KIND_VALUES;
+
+/** Plural labels: the «Par type» group headers and the filter chips. */
+export const PATIENT_FILE_KIND_GROUP_LABELS: Record<PatientFileKind, string> = {
+  [PatientFileKind.Panoramic]: "Panoramiques",
+  [PatientFileKind.Periapical]: "Rétro-alvéolaires",
+  [PatientFileKind.Cephalometric]: "Téléradiographies",
+  [PatientFileKind.Photo]: "Photos",
+  [PatientFileKind.Other]: "Autres",
+};
+
+// ── Grouping (prompts/32, decision 2) ───────────────────────────────────────
+
+export const IMAGING_GROUP_BY_VALUES = [
+  ImagingGroupBy.Date,
+  ImagingGroupBy.Type,
+] as const;
+
+export const DEFAULT_IMAGING_GROUP_BY = ImagingGroupBy.Date;
+
+export const IMAGING_GROUP_BY_LABELS: Record<ImagingGroupBy, string> = {
+  [ImagingGroupBy.Date]: "Par date",
+  [ImagingGroupBy.Type]: "Par type",
+};
+
 // ── Allowed content (decision 5) ────────────────────────────────────────────
 
 export const IMAGE_CONTENT_TYPES = [
@@ -87,6 +118,12 @@ export const MAX_FILES_PER_BATCH = 10;
 export const UPLOAD_CONCURRENCY = 3;
 /** `getManyByPatient` returns at most this many rows. */
 export const IMAGING_LIST_CAP = 200;
+/** A full adult dentition: no image can show more distinct teeth. */
+export const IMAGING_MAX_TEETH = 32;
+/** Tooth chips on a tile before «+N». */
+export const IMAGING_TILE_MAX_TEETH = 3;
+/** «Comparer» puts exactly two images side by side. */
+export const IMAGING_COMPARE_MAX = 2;
 export const IMAGING_NOTES_MAX = 1000;
 export const ORIGINAL_NAME_MAX = 255;
 /** A signed upload token outlives a slow phone upload, not much more. */
@@ -116,12 +153,42 @@ export const IMAGING_COPY = {
   filterLabel: "Filtrer par type d’image",
   count: (count: number) =>
     count === 0 ? "Aucune image" : `${count} image${count > 1 ? "s" : ""}`,
-  truncated: (shown: number, total: number) =>
-    `${shown} images affichées sur ${total}. Filtrez par type pour voir les autres.`,
+  /** «Panoramiques (3)», «Toutes (12)». */
+  chip: (label: string, count: number) => `${label} (${count})`,
+  truncated: `Seules les ${IMAGING_LIST_CAP} images les plus récentes sont affichées.`,
   emptyTitle: "Aucune image pour le moment.",
   emptyDescription:
     "Les radiographies et photos ajoutées au dossier apparaîtront ici.",
-  emptyFilteredDescription: "Aucune image de ce type dans le dossier.",
+  emptyFilteredTitle: "Aucune image ne correspond.",
+  emptyFilteredDescription: "Modifiez le type ou la dent sélectionnés.",
+  resetFilters: "Réinitialiser les filtres",
+
+  // Toolbar (prompts/32)
+  groupByLabel: "Regrouper les images",
+  toothFilter: "Dent",
+  toothFilterLabel: "Filtrer par dent",
+  toothFilterHint: "Seules les images étiquetées avec cette dent sont affichées.",
+  toothChip: (tooth: string) => `Dent ${tooth}`,
+  clearTooth: (tooth: string) => `Retirer le filtre Dent ${tooth}`,
+  compare: "Comparer",
+  compareCancel: "Annuler la comparaison",
+  compareHint: "Sélectionnez deux images à comparer.",
+  compareSelected: (count: number) => `${count} / ${IMAGING_COMPARE_MAX} sélectionnée${count > 1 ? "s" : ""}`,
+  compareTooMany: "Deux images au plus : désélectionnez-en une d’abord.",
+  selectTile: (label: string) => `Sélectionner ${label}`,
+  groupToggle: (label: string, count: number) =>
+    `${label}, ${count} image${count > 1 ? "s" : ""}`,
+  groupCount: (count: number) => `${count} image${count > 1 ? "s" : ""}`,
+  today: "Aujourd’hui",
+  yesterday: "Hier",
+  moreTeeth: (count: number) => `+${count}`,
+  teeth: "Dents",
+  noTeeth: "Aucune dent",
+
+  // Compare view
+  compareTitle: "Comparaison d’images",
+  compareDescription: "Deux images côte à côte, chacune avec son propre zoom.",
+  syncZoom: "Synchroniser le zoom",
   archivedNotice:
     "Dossier archivé : les images restent consultables mais ne peuvent plus être modifiées.",
   forbiddenTitle: "Accès réservé",
@@ -165,6 +232,9 @@ export const IMAGING_COPY = {
 
   // Viewer
   viewerTitle: "Visionneuse d’images",
+  filmstrip: "Images du groupe",
+  filmstripItem: (label: string, index: number, total: number) =>
+    `${label} (${index} / ${total})`,
   previous: "Image précédente",
   next: "Image suivante",
   position: (index: number, total: number) => `${index} / ${total}`,
@@ -209,6 +279,9 @@ export const IMAGING_VALIDATION_MESSAGES = {
   kindInvalid: "Type d’image invalide",
   dateInvalid: "Date invalide",
   inFuture: "La date ne peut pas être dans le futur",
+  teethInvalid: "Liste de dents invalide",
+  teethDuplicate: "Une même dent ne peut être indiquée qu’une fois",
+  teethTooMany: `${IMAGING_MAX_TEETH} dents au plus par image`,
   notesTooLong: `La note ne peut pas dépasser ${IMAGING_NOTES_MAX} caractères`,
   nameInvalid: "Nom de fichier invalide",
   pathnameInvalid: "Chemin de fichier invalide",
@@ -221,6 +294,15 @@ export const IMAGING_VALIDATION_MESSAGES = {
   tooSmall: `Image trop petite : ${IMAGE_MIN_DIMENSION} px au moins de chaque côté.`,
   tooBig: `Image trop grande : ${IMAGE_MAX_DIMENSION.toLocaleString("fr-FR")} px au plus de chaque côté.`,
   unreadable: "Cette image n’a pas pu être lue. Le fichier est peut-être endommagé.",
+} as const;
+
+/**
+ * What `update` appends to the activity line when the teeth change
+ * (prompts/32): the line itself comes from the activity slice's summaries.
+ */
+export const IMAGING_ACTIVITY_COPY = {
+  teethChanged: (teeth: readonly string[]) =>
+    teeth.length === 0 ? " Dents retirées." : ` Dents : ${teeth.join(", ")}.`,
 } as const;
 
 /** Every message a procedure or a route can answer with. */

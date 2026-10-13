@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { addCalendarDays, toClinicDate } from "@/lib/time";
 import { IMAGING_VALIDATION_MESSAGES as M } from "./constants";
+import { ADULT_TEETH } from "@/modules/odontogram/constants";
 import {
   imagingByPatientSchema,
+  imagingTeethSchema,
+  imagingUpdateSchema,
   imagingMetadataSchema,
   imagingRegisterSchema,
   uploadClientPayloadSchema,
@@ -98,5 +101,55 @@ describe("imagingRegisterSchema", () => {
 describe("imagingByPatientSchema", () => {
   it("takes `kind: null` — what nuqs holds when no chip is active", () => {
     expect(imagingByPatientSchema.safeParse({ patientId: "p1", kind: null }).success).toBe(true);
+  });
+});
+
+describe("imagingTeethSchema", () => {
+  it("accepts FDI codes and stores them sorted in the repo's tooth order", () => {
+    expect(imagingTeethSchema.parse(["26", "16", "55"])).toEqual(["16", "26", "55"]);
+    expect(imagingTeethSchema.parse([])).toEqual([]);
+  });
+
+  it("refuses an invalid code with the treatments' French message", () => {
+    expect(firstMessage(imagingTeethSchema.safeParse(["19"]))).toBe(
+      "Dent invalide (numérotation FDI)",
+    );
+    expect(imagingTeethSchema.safeParse(["1"]).success).toBe(false);
+  });
+
+  it("refuses duplicates instead of dropping them", () => {
+    expect(firstMessage(imagingTeethSchema.safeParse(["16", "16"]))).toBe(M.teethDuplicate);
+  });
+
+  it("refuses more than 32 teeth", () => {
+    const thirtyThree = [...ADULT_TEETH, "51"];
+    expect(thirtyThree).toHaveLength(33);
+    expect(firstMessage(imagingTeethSchema.safeParse(thirtyThree))).toBe(M.teethTooMany);
+    expect(imagingTeethSchema.safeParse([...ADULT_TEETH]).success).toBe(true);
+  });
+});
+
+describe("imagingUpdateSchema", () => {
+  const base = { id: "f1", expectedUpdatedAt: new Date() };
+
+  it("leaves absent fields undefined (unchanged), and a cleared note null", () => {
+    const parsed = imagingUpdateSchema.parse(base);
+    expect(parsed.notes).toBeUndefined();
+    expect(parsed.teeth).toBeUndefined();
+    expect(parsed.kind).toBeUndefined();
+    expect(imagingUpdateSchema.parse({ ...base, notes: "" }).notes).toBeNull();
+  });
+
+  it("validates teeth like register", () => {
+    expect(imagingUpdateSchema.parse({ ...base, teeth: ["21", "11"] }).teeth).toEqual(["11", "21"]);
+    expect(imagingUpdateSchema.safeParse({ ...base, teeth: ["11", "11"] }).success).toBe(false);
+  });
+});
+
+describe("imagingByPatientSchema — tooth", () => {
+  it("takes one FDI tooth or nothing", () => {
+    expect(imagingByPatientSchema.safeParse({ patientId: "p1", tooth: "36" }).success).toBe(true);
+    expect(imagingByPatientSchema.safeParse({ patientId: "p1", tooth: null }).success).toBe(true);
+    expect(imagingByPatientSchema.safeParse({ patientId: "p1", tooth: "99" }).success).toBe(false);
   });
 });

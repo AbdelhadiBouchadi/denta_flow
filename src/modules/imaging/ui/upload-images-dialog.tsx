@@ -52,6 +52,7 @@ import {
 import { PatientFileKind, type ImageContentType } from "../types";
 import { makeThumbnail, readImageDimensions } from "./image-processing";
 import { KindSelect, TakenDatePicker } from "./metadata-fields";
+import { TeethField } from "./teeth-field";
 
 type UploadStatus = "queued" | "uploading" | "done" | "error";
 
@@ -200,6 +201,7 @@ const UploadImagesDialog = ({
         kind: fromCamera ? PatientFileKind.Photo : PatientFileKind.Other,
         takenDate: toClinicDate(new Date()),
         notes: "",
+        teeth: [],
       });
     }
   };
@@ -271,6 +273,7 @@ const UploadImagesDialog = ({
         kind: item.kind,
         takenDate: item.takenDate,
         notes: item.notes,
+        teeth: item.teeth,
         original: {
           pathname: original.pathname,
           name: file.name.slice(0, 255) || "image",
@@ -369,7 +372,13 @@ const UploadImagesDialog = ({
         noValidate
         className="@container flex min-h-0 flex-col gap-4"
       >
-        <div className="flex max-h-[65vh] min-h-0 flex-col gap-4 overflow-y-auto px-1">
+        {/* The list scrolls INSIDE the dialog, bounded by the viewport so the
+            footer stays visible with ten files on a 1366×768 or 1280×720
+            screen (prompts/32, decision 8). The budgets are the chrome around
+            it: the dialog's header, padding and footer row on desktop; the
+            drawer's `100dvh − 6rem` cap, handle, header and stacked buttons
+            on a phone. */}
+        <div className="flex max-h-[max(10rem,calc(100dvh-21rem))] min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-1 md:max-h-[max(12rem,min(65vh,calc(100dvh-14rem)))]">
           <input
             ref={pickerRef}
             type="file"
@@ -531,27 +540,44 @@ const UploadImagesDialog = ({
                           </Field>
                         )}
                       />
+                      <Controller
+                        control={form.control}
+                        name={`items.${index}.teeth`}
+                        render={({ field: input, fieldState }) => (
+                          <Field data-invalid={fieldState.invalid}>
+                            <FieldLabel htmlFor={id("teeth")}>{COPY.teeth}</FieldLabel>
+                            <TeethField
+                              id={id("teeth")}
+                              value={input.value ?? []}
+                              onChange={input.onChange}
+                              disabled={locked}
+                              invalid={fieldState.invalid}
+                            />
+                            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                          </Field>
+                        )}
+                      />
+                      <Controller
+                        control={form.control}
+                        name={`items.${index}.notes`}
+                        render={({ field: input, fieldState }) => (
+                          <Field data-invalid={fieldState.invalid}>
+                            <FieldLabel htmlFor={id("notes")}>{COPY.notes}</FieldLabel>
+                            <Input
+                              {...input}
+                              id={id("notes")}
+                              value={input.value ?? ""}
+                              autoComplete="off"
+                              disabled={locked}
+                              aria-invalid={fieldState.invalid}
+                              placeholder={COPY.notesPlaceholder}
+                              className="h-9"
+                            />
+                            {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                          </Field>
+                        )}
+                      />
                     </div>
-                    <Controller
-                      control={form.control}
-                      name={`items.${index}.notes`}
-                      render={({ field: input, fieldState }) => (
-                        <Field data-invalid={fieldState.invalid}>
-                          <FieldLabel htmlFor={id("notes")}>{COPY.notes}</FieldLabel>
-                          <Input
-                            {...input}
-                            id={id("notes")}
-                            value={input.value ?? ""}
-                            autoComplete="off"
-                            disabled={locked}
-                            aria-invalid={fieldState.invalid}
-                            placeholder={COPY.notesPlaceholder}
-                            className="h-9"
-                          />
-                          {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-                        </Field>
-                      )}
-                    />
 
                     {entry.status === "error" && (
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -582,7 +608,7 @@ const UploadImagesDialog = ({
           )}
         </div>
 
-        <div className="flex flex-col-reverse gap-2 @md:flex-row @md:justify-end">
+        <div className="flex shrink-0 flex-col-reverse gap-2 @md:flex-row @md:justify-end">
           <Button
             type="button"
             variant="outline"

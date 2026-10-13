@@ -12,13 +12,12 @@ import {
   PencilIcon,
   RotateCwIcon,
   ScanIcon,
-  SlidersHorizontalIcon,
   Trash2Icon,
   XIcon,
   ZoomInIcon,
   ZoomOutIcon,
 } from "lucide-react";
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
 import { toast } from "sonner";
 
@@ -40,29 +39,32 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Slider } from "@/components/ui/slider";
 import { Toggle } from "@/components/ui/toggle";
 import { useConfirm } from "@/hooks/use-confirm";
 import { getErrorMessage } from "@/lib/errors";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { useTRPC } from "@/trpc/client";
 import {
   IMAGING_COPY as COPY,
   PATIENT_FILE_KIND_LABELS,
   imagingFileUrl,
 } from "../constants";
-import { formatFileSize } from "../files";
+import { formatFileSize, thumbnailSize } from "../files";
+import { neighboursOf } from "../gallery";
 import { useInvalidateImaging } from "../hooks/use-invalidate-imaging";
 import type { ImagingFile, PatientFileKind } from "../types";
+import {
+  adjustmentFilter,
+  AdjustmentsPopover,
+  DEFAULT_LEVEL,
+} from "./display-adjustments";
 import { ImageMetadataForm } from "./image-metadata-form";
 import ImagingKindBadge from "./imaging-kind-badge";
+import ToothChips from "./tooth-chips";
 
 interface ImageViewerProps {
+  /** The grid's current filtered and grouped set, in grid order. */
   files: ImagingFile[];
   /** The open file's id — `null` closes the viewer. */
   fileId: string | null;
@@ -84,6 +86,9 @@ const isEditingTarget = (target: EventTarget) =>
  * and a details panel (a bottom section on phones). The image is always the
  * same-origin route — the session is checked on every request — and never
  * `next/image` (decision 7).
+ *
+ * prompts/32: previous / next and the filmstrip walk `files` — the grid's
+ * filtered set in its grouped order — so «next» is the tile to the right.
  */
 const ImageViewer = ({
   files,
@@ -92,23 +97,21 @@ const ImageViewer = ({
   canWrite,
   canRemove,
 }: ImageViewerProps) => {
-  const index = fileId === null ? -1 : files.findIndex((f) => f.id === fileId);
+  const { index, previousId, nextId } = neighboursOf(
+    files.map((f) => f.id),
+    fileId,
+  );
   // Removed, or re-filed out of the current filter: the viewer closes.
   const file = index === -1 ? null : files[index];
 
-  const go = (step: number) => {
-    const next = files[index + step];
-    if (next) onFileChange(next.id);
-  };
-
   const onKeyDown = (event: KeyboardEvent) => {
     if (isEditingTarget(event.target)) return;
-    if (event.key === "ArrowLeft") {
+    if (event.key === "ArrowLeft" && previousId) {
       event.preventDefault();
-      go(-1);
-    } else if (event.key === "ArrowRight") {
+      onFileChange(previousId);
+    } else if (event.key === "ArrowRight" && nextId) {
       event.preventDefault();
-      go(1);
+      onFileChange(nextId);
     }
   };
 
@@ -132,15 +135,18 @@ const ImageViewer = ({
             file={file}
             index={index}
             total={files.length}
-            onPrevious={index > 0 ? () => go(-1) : null}
-            onNext={index < files.length - 1 ? () => go(1) : null}
+            onPrevious={previousId ? () => onFileChange(previousId) : null}
+            onNext={nextId ? () => onFileChange(nextId) : null}
             onClose={() => onFileChange(null)}
-            onRemoved={() =>
-              onFileChange(files[index + 1]?.id ?? files[index - 1]?.id ?? null)
-            }
+            onRemoved={() => onFileChange(nextId ?? previousId)}
             canWrite={canWrite}
             canRemove={canRemove}
           />
+        )}
+        {/* Outside the keyed page: its thumbnails stay mounted (the file
+            route answers `no-store`) while the page changes image. */}
+        {file && files.length > 1 && (
+          <Filmstrip files={files} currentId={file.id} onSelect={onFileChange} />
         )}
       </DialogContent>
     </Dialog>
@@ -158,8 +164,6 @@ interface ViewerPageProps {
   canWrite: boolean;
   canRemove: boolean;
 }
-
-const DEFAULT_LEVEL = 100;
 
 const ViewerPage = ({
   file,
@@ -297,7 +301,7 @@ const ViewerPage = ({
                     onError={() => setFailed(true)}
                     className="max-h-full max-w-full object-contain transition-[filter,transform] duration-150 select-none"
                     style={{
-                      filter: `brightness(${brightness}%) contrast(${contrast}%)${inverted ? " invert(1)" : ""}`,
+                      filter: adjustmentFilter(brightness, contrast, inverted),
                       transform: `rotate(${rotation}deg)`,
                     }}
                   />
@@ -348,28 +352,12 @@ const ViewerPage = ({
                 >
                   <ContrastIcon />
                 </Toggle>
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <Button variant="ghost" size="icon-lg" aria-label={COPY.adjustments} />
-                    }
-                  >
-                    <SlidersHorizontalIcon />
-                  </PopoverTrigger>
-                  <PopoverContent className="flex w-64 flex-col gap-4">
-                    <LevelSlider
-                      label={COPY.brightness}
-                      value={brightness}
-                      onChange={setBrightness}
-                    />
-                    <LevelSlider
-                      label={COPY.contrast}
-                      value={contrast}
-                      onChange={setContrast}
-                    />
-                    <p className="text-muted-foreground text-xs">{COPY.adjustmentsNote}</p>
-                  </PopoverContent>
-                </Popover>
+                <AdjustmentsPopover
+                  brightness={brightness}
+                  contrast={contrast}
+                  onBrightnessChange={setBrightness}
+                  onContrastChange={setContrast}
+                />
                 <Button
                   variant="ghost"
                   size="icon-lg"
@@ -398,6 +386,14 @@ const ViewerPage = ({
                 <dd><ImagingKindBadge kind={kind} /></dd>
                 <dt className="text-muted-foreground">{COPY.takenDate}</dt>
                 <dd suppressHydrationWarning className="tabular-nums">{formatDate(file.takenAt)}</dd>
+                <dt className="text-muted-foreground">{COPY.teeth}</dt>
+                <dd>
+                  {file.teeth.length > 0 ? (
+                    <ToothChips teeth={file.teeth} className="[&>span]:bg-muted" />
+                  ) : (
+                    <span className="text-muted-foreground">{COPY.noTeeth}</span>
+                  )}
+                </dd>
                 <dt className="text-muted-foreground">{COPY.uploadedBy}</dt>
                 <dd>{file.uploaderName ?? COPY.unknownStaff}</dd>
                 <dt className="text-muted-foreground">{COPY.addedOn}</dt>
@@ -462,31 +458,71 @@ const ViewerPage = ({
   );
 };
 
-interface LevelSliderProps {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
+interface FilmstripProps {
+  files: ImagingFile[];
+  currentId: string;
+  onSelect: (fileId: string) => void;
 }
 
-/** 0–200 %, 100 % being the image as stored. */
-const LevelSlider = ({ label, value, onChange }: LevelSliderProps) => (
-  <div className="flex flex-col gap-2">
-    <div className="flex items-center justify-between text-sm">
-      <span>{label}</span>
-      <span className="text-muted-foreground tabular-nums">{`${value} %`}</span>
-    </div>
-    <Slider
-      min={0}
-      max={200}
-      step={5}
-      value={[value]}
-      onValueChange={(next) => {
-        const [level] = Array.isArray(next) ? next : [next];
-        if (typeof level === "number") onChange(level);
-      }}
-      aria-label={label}
-    />
-  </div>
-);
+/**
+ * The set's thumbnails in one row that scrolls sideways INSIDE its own
+ * container (never the page). Thumbnails only — never an original — and
+ * lazy-loaded; the current one is scrolled into view on every change.
+ */
+const Filmstrip = ({ files, currentId, onSelect }: FilmstripProps) => {
+  const currentRef = useRef<HTMLButtonElement>(null);
+
+  // DOM sync, not data: keep the current thumbnail visible.
+  useEffect(() => {
+    currentRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [currentId]);
+
+  return (
+    <nav aria-label={COPY.filmstrip} className="min-w-0 shrink-0 border-t">
+      <ol className="flex gap-1.5 overflow-x-auto overscroll-x-contain px-2 py-2 scrollbar-thin">
+        {files.map((file, index) => {
+          const current = file.id === currentId;
+          const kind = file.kind as PatientFileKind;
+          const thumb = thumbnailSize(file.width, file.height);
+          return (
+            <li key={file.id} className="shrink-0">
+              <button
+                ref={current ? currentRef : undefined}
+                type="button"
+                onClick={() => onSelect(file.id)}
+                aria-current={current || undefined}
+                aria-label={COPY.filmstripItem(
+                  COPY.tileLabel(PATIENT_FILE_KIND_LABELS[kind], formatDate(file.takenAt)),
+                  index + 1,
+                  files.length,
+                )}
+                className={cn(
+                  "bg-muted focus-visible:ring-ring block size-14 overflow-hidden rounded-md border outline-none focus-visible:ring-2 md:size-16",
+                  current
+                    ? "ring-primary ring-offset-background ring-2 ring-offset-1"
+                    : "opacity-70 hover:opacity-100",
+                )}
+              >
+                {file.hasThumbnail && (
+                  // eslint-disable-next-line @next/next/no-img-element -- decision 7
+                  <img
+                    src={imagingFileUrl(file.id, "thumb")}
+                    alt=""
+                    width={thumb.width}
+                    height={thumb.height}
+                    loading="lazy"
+                    decoding="async"
+                    draggable={false}
+                    className="size-full object-cover"
+                  />
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+};
 
 export default ImageViewer;
