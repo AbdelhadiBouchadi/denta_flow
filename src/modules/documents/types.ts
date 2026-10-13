@@ -14,9 +14,9 @@ type DocumentsOutputs = inferRouterOutputs<AppRouter>["documents"];
 export type DocumentListItem = DocumentsOutputs["getMany"]["items"][number];
 
 /**
- * Mirrors the `document_type` pgEnum, kept in lockstep (rules.test.ts). Only
- * `Invoice` and `Quote` are generated today; the V1.1 / V1.2 types are listed
- * so the label map covers the enum, and never offered in any UI.
+ * Mirrors the `document_type` pgEnum, kept in lockstep (rules.test.ts).
+ * `CareSheet` (V1.2) is listed so the label map covers the enum, and is never
+ * offered in any UI.
  */
 export enum DocumentType {
   Invoice = "facture",
@@ -26,5 +26,13 @@ export enum DocumentType {
   Certificate = "certificat",
 }
 
-/** The types this branch generates: the snapshot and the filter accept these only. */
-export type GeneratedDocumentType = DocumentType.Invoice | DocumentType.Quote;
+/** The two billing documents: built from actes, carry amounts (prompts/21). */
+export type BillingDocumentType = DocumentType.Invoice | DocumentType.Quote;
+
+/** The medical documents: written by a practitioner, no amount (prompts/29). */
+export type MedicalDocumentType =
+  | DocumentType.Prescription
+  | DocumentType.Certificate;
+
+/** Every type generated today: numbered, snapshotted, listed and filtered. */
+export type GeneratedDocumentType = BillingDocumentType | MedicalDocumentType;

@@ -16,10 +16,19 @@ import {
 } from "@/lib/pdf/billing-document";
 import { registerPdfFonts } from "@/lib/pdf/fonts";
 import { loadPdfLogo, type PdfImage } from "@/lib/pdf/logo";
+import {
+  MedicalDocument,
+  type MedicalDocumentProps,
+} from "@/lib/pdf/medical-document";
 import { formatPatientName } from "@/modules/patients/derived";
 import { formatTeethList } from "@/modules/treatments/teeth";
 import { DOCUMENT_PDF_COPY as P, LOGO_FETCH_TIMEOUT_MS } from "../constants";
-import { documentSnapshotSchema, type DocumentSnapshot } from "../snapshot";
+import {
+  documentSnapshotSchema,
+  type BillingSnapshot,
+  type DocumentSnapshot,
+  type MedicalSnapshot,
+} from "../snapshot";
 import { DocumentType } from "../types";
 
 /**
@@ -50,7 +59,32 @@ const identifiersLine = ({ clinic }: DocumentSnapshot) =>
     clinic.cnssNumber && `${P.identifiers.cnssNumber} ${clinic.cnssNumber}`,
   ]).join(IDENTIFIER_SEPARATOR);
 
-const amountRows = (snapshot: DocumentSnapshot) => {
+/** The clinic block, identical on every document type. */
+const clinicHeader = (snapshot: DocumentSnapshot, logo: PdfImage | null) => {
+  const { clinic } = snapshot;
+  return {
+    logo,
+    name: clinic.name,
+    lines: present([
+      clinic.address,
+      clinic.city,
+      clinic.phone && `${P.phone} ${formatPhone(clinic.phone)}`,
+    ]),
+    identifiers: identifiersLine(snapshot),
+  };
+};
+
+/** Name, title, INPE — an empty INPE is left out, never «—» (decision 4). */
+const signatureLines = (practitioner: DocumentSnapshot["practitioner"]) =>
+  practitioner
+    ? present([
+        practitioner.name,
+        practitioner.title,
+        practitioner.inpe && `${P.inpe} ${practitioner.inpe}`,
+      ])
+    : [];
+
+const amountRows = (snapshot: BillingSnapshot) => {
   const totals: PdfAmountRow[] = [
     { label: P.total, value: formatDH(snapshot.totalCents), emphasis: true },
   ];
@@ -80,26 +114,17 @@ const amountRows = (snapshot: DocumentSnapshot) => {
 
 /** Pure: the page's props from a parsed snapshot. Exported for the tests. */
 export const toBillingDocumentProps = (
-  snapshot: DocumentSnapshot,
+  snapshot: BillingSnapshot,
   logo: PdfImage | null,
 ): BillingDocumentProps => {
-  const { clinic, patient, practitioner } = snapshot;
+  const { clinic, patient } = snapshot;
   const title = P.title(snapshot.type, snapshot.number);
   const { totals, situation } = amountRows(snapshot);
 
   return {
     documentTitle: title,
     author: clinic.name,
-    header: {
-      logo,
-      name: clinic.name,
-      lines: present([
-        clinic.address,
-        clinic.city,
-        clinic.phone && `${P.phone} ${formatPhone(clinic.phone)}`,
-      ]),
-      identifiers: identifiersLine(snapshot),
-    },
+    header: clinicHeader(snapshot, logo),
     title,
     details: [
       { label: P.date, value: formatDate(snapshot.issuedAt) },
@@ -141,16 +166,61 @@ export const toBillingDocumentProps = (
     totals,
     situation,
     mentions: snapshot.type === DocumentType.Quote ? [P.quoteMention] : [],
-    signature: {
-      lines: practitioner
-        ? present([
-            practitioner.name,
-            practitioner.title,
-            practitioner.inpe && `${P.inpe} ${practitioner.inpe}`,
-          ])
-        : [],
-      label: P.signature,
+    signature: { lines: signatureLines(snapshot.practitioner), label: P.signature },
+    pageLabel: P.page,
+  };
+};
+
+/** «1 comprimé matin et soir · Durée : 7 jours»; either half may be absent. */
+const lineDetail = (posology: string, duration: string | null) =>
+  present([posology, duration && `${P.duration} : ${duration}`]).join(" · ") ||
+  null;
+
+/**
+ * Pure: the ordonnance's or the certificat's props from a parsed snapshot.
+ * Exported for the tests. «Papier à en-tête» drops the header block — the
+ * page keeps its space (MedicalDocument's reserved slot).
+ */
+export const toMedicalDocumentProps = (
+  snapshot: MedicalSnapshot,
+  logo: PdfImage | null,
+): MedicalDocumentProps => {
+  const { clinic, patient } = snapshot;
+  const title =
+    snapshot.type === DocumentType.Certificate
+      ? P.certificateTitle(snapshot.number)
+      : P.title(snapshot.type, snapshot.number);
+  const issuedOn = formatDate(snapshot.issuedAt);
+
+  return {
+    documentTitle: title,
+    author: clinic.name,
+    header: snapshot.noHeader ? null : clinicHeader(snapshot, logo),
+    title,
+    details: [{ label: P.date, value: issuedOn }],
+    recipient: {
+      heading: P.patient,
+      lines: present([
+        formatPatientName(patient),
+        patient.age !== null && P.age(patient.age),
+        patient.cin && `${P.cin} ${patient.cin}`,
+      ]),
     },
+    content:
+      snapshot.type === DocumentType.Prescription
+        ? {
+            kind: "lines",
+            lines: snapshot.lines.map((line, index) => ({
+              key: String(index),
+              marker: `${index + 1}.`,
+              heading: present([line.label, line.strength]).join(" "),
+              detail: lineDetail(line.posology, line.duration),
+              remark: line.remark,
+            })),
+          }
+        : { kind: "text", text: snapshot.body },
+    placeAndDate: P.placeAndDate(clinic.city, issuedOn),
+    signature: { lines: signatureLines(snapshot.practitioner), label: P.signature },
     pageLabel: P.page,
   };
 };
@@ -162,9 +232,24 @@ export const parseStoredSnapshot = (stored: unknown): DocumentSnapshot => {
   return parsed.data;
 };
 
+const isMedical = (snapshot: DocumentSnapshot): snapshot is MedicalSnapshot =>
+  snapshot.type === DocumentType.Prescription ||
+  snapshot.type === DocumentType.Certificate;
+
 export const renderDocumentPdf = async (stored: unknown): Promise<Buffer> => {
   const snapshot = parseStoredSnapshot(stored);
   registerPdfFonts();
+
+  if (isMedical(snapshot)) {
+    // On pre-printed paper the header is not drawn: no logo to fetch.
+    const logo = snapshot.noHeader
+      ? null
+      : await loadPdfLogo(snapshot.clinic.logoUrl, LOGO_FETCH_TIMEOUT_MS);
+    return renderToBuffer(
+      <MedicalDocument {...toMedicalDocumentProps(snapshot, logo)} />,
+    );
+  }
+
   const logo = await loadPdfLogo(snapshot.clinic.logoUrl, LOGO_FETCH_TIMEOUT_MS);
   return renderToBuffer(
     <BillingDocument {...toBillingDocumentProps(snapshot, logo)} />,

@@ -1,6 +1,7 @@
 import { activityRouter } from "@/modules/activity/server/procedures";
 import { appointmentTypesRouter } from "@/modules/appointment-types/server/procedures";
 import { appointmentsRouter } from "@/modules/appointments/server/procedures";
+import { certificateTemplatesRouter } from "@/modules/certificates/server/procedures";
 import { clinicRouter } from "@/modules/clinic/server/procedures";
 import { dashboardRouter } from "@/modules/dashboard/server/procedures";
 import { documentsRouter } from "@/modules/documents/server/procedures";
@@ -9,6 +10,10 @@ import { insurersRouter } from "@/modules/insurers/server/procedures";
 import { odontogramRouter } from "@/modules/odontogram/server/procedures";
 import { patientsRouter } from "@/modules/patients/server/procedures";
 import { paymentsRouter } from "@/modules/payments/server/procedures";
+import {
+  medicationsRouter,
+  prescriptionPacksRouter,
+} from "@/modules/prescriptions/server/procedures";
 import { schedulesRouter } from "@/modules/schedules/server/procedures";
 import { servicesRouter } from "@/modules/services/server/procedures";
 import { staffRouter } from "@/modules/staff/server/procedures";
@@ -44,6 +49,9 @@ export const appRouter = createTRPCRouter({
   expenses: expensesRouter,
   activity: activityRouter,
   odontogram: odontogramRouter,
+  medications: medicationsRouter,
+  prescriptionPacks: prescriptionPacksRouter,
+  certificateTemplates: certificateTemplatesRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -28,7 +28,7 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { nanoid } from "nanoid";
 
 import { CLINIC_TIMEZONE } from "../constants";
-import { clinicInstant, toClinicDate } from "../lib/time";
+import { addCalendarDays, clinicInstant, toClinicDate } from "../lib/time";
 import { logActivity } from "../modules/activity/server/log";
 import {
   APPOINTMENT_SUMMARIES,
@@ -39,20 +39,32 @@ import {
 } from "../modules/activity/summaries";
 import { ActivityAction, ActivityEntityType } from "../modules/activity/types";
 import { AppointmentStatus } from "../modules/appointments/types";
+import {
+  buildCertificateValues,
+  renderCertificateBody,
+  resolveCertificatePeriod,
+  templateBodyError,
+} from "../modules/certificates/variables";
 import { buildDocumentFileName } from "../modules/documents/file-name";
 import { nextDocumentNumber } from "../modules/documents/numbering";
 import {
+  buildCertificateSnapshot,
   buildDocumentSnapshot,
+  buildPrescriptionSnapshot,
   pickPractitionerId,
   type BuildSnapshotInput,
 } from "../modules/documents/snapshot";
-import { DocumentType } from "../modules/documents/types";
+import {
+  DocumentType,
+  type GeneratedDocumentType,
+} from "../modules/documents/types";
 import {
   ODONTOGRAM_ENVELOPE_VERSION,
   ODONTOGRAM_LIBRARY_VERSION,
 } from "../modules/odontogram/constants";
 import { odontogramEnvelopeSchema } from "../modules/odontogram/schemas";
 import { formatPatientName } from "../modules/patients/derived";
+import { medicationNameKey } from "../modules/prescriptions/normalize";
 import { getNgapAct } from "../modules/services/ngap";
 import { db } from "./index";
 import adultCariesChart from "./fixtures/odontogram-adult-caries.json";
@@ -62,16 +74,20 @@ import {
   activityLog,
   appointments,
   appointmentTypes,
+  certificateTemplates,
   clinicSettings,
   documents,
   expenses,
   insurers,
   medicalHistories,
+  medications,
   odontogramCharts,
   patients,
   patientTags,
   payments,
   practitionerSchedules,
+  prescriptionPackItems,
+  prescriptionPacks,
   scheduleExceptions,
   services,
   tags,
@@ -467,6 +483,117 @@ const APPOINTMENT_TYPE_DEFS = [
     ],
   },
 ] as const;
+
+// ── Ordonnances & certificats (prompts/29) ──────────────────────────────────
+// «À VALIDER» — EVERY ITEM BELOW. A starting point written for the demo, to
+// be reviewed by the practising dentist before any real use: the molecules,
+// forms, strengths, default posologies and durations, the composition of the
+// three packs and the wording of the three certificates. Nothing here was
+// checked against a Moroccan reference (AMMPS, Vidal Maroc, the clinic's own
+// habits). Adult posologies only; no paediatric dose is seeded on purpose.
+// Molecules, never brand names.
+interface MedicationDef {
+  key: string;
+  name: string;
+  form: string;
+  strength: string | null;
+  posology: string;
+  duration: string;
+}
+
+const MEDICATION_DEFS: MedicationDef[] = [
+  // Antalgiques / anti-inflammatoires — à valider
+  { key: "paracetamol-1g", name: "Paracétamol", form: "comprimé", strength: "1 g", posology: "1 comprimé jusqu’à 3 fois par jour, à 6 heures d’intervalle au moins", duration: "3 jours" },
+  { key: "paracetamol-codeine", name: "Paracétamol + codéine", form: "comprimé", strength: "500 mg/30 mg", posology: "1 comprimé toutes les 6 heures si douleur", duration: "3 jours" },
+  { key: "ibuprofene-400", name: "Ibuprofène", form: "comprimé", strength: "400 mg", posology: "1 comprimé 3 fois par jour, au cours des repas", duration: "3 jours" },
+  { key: "diclofenac-50", name: "Diclofénac", form: "comprimé", strength: "50 mg", posology: "1 comprimé 2 fois par jour, au cours des repas", duration: "3 jours" },
+  { key: "tramadol-50", name: "Tramadol", form: "gélule", strength: "50 mg", posology: "1 gélule toutes les 6 heures si douleur intense", duration: "3 jours" },
+  { key: "dexamethasone-4", name: "Dexaméthasone", form: "comprimé", strength: "4 mg", posology: "1 comprimé le matin", duration: "3 jours" },
+  // Antibiotiques — à valider
+  { key: "amoxicilline-1g", name: "Amoxicilline", form: "comprimé", strength: "1 g", posology: "1 comprimé matin et soir", duration: "7 jours" },
+  { key: "amoxicilline-500", name: "Amoxicilline", form: "gélule", strength: "500 mg", posology: "2 gélules matin et soir", duration: "7 jours" },
+  { key: "amox-clav", name: "Amoxicilline + acide clavulanique", form: "comprimé", strength: "1 g/125 mg", posology: "1 comprimé matin et soir, au début du repas", duration: "7 jours" },
+  { key: "metronidazole-500", name: "Métronidazole", form: "comprimé", strength: "500 mg", posology: "1 comprimé 3 fois par jour", duration: "7 jours" },
+  { key: "spiramycine-metronidazole", name: "Spiramycine + métronidazole", form: "comprimé", strength: "1,5 MUI/250 mg", posology: "2 comprimés matin et soir, au cours des repas", duration: "7 jours" },
+  { key: "spiramycine-3m", name: "Spiramycine", form: "comprimé", strength: "3 MUI", posology: "1 comprimé 3 fois par jour", duration: "7 jours" },
+  { key: "clindamycine-300", name: "Clindamycine", form: "gélule", strength: "300 mg", posology: "2 gélules matin et soir", duration: "7 jours" },
+  { key: "azithromycine-500", name: "Azithromycine", form: "comprimé", strength: "500 mg", posology: "1 comprimé par jour", duration: "3 jours" },
+  // Bains de bouche — à valider
+  { key: "chlorhexidine-012", name: "Chlorhexidine", form: "bain de bouche", strength: "0,12 %", posology: "15 ml pendant 30 secondes, 2 fois par jour, après le brossage", duration: "7 jours" },
+  { key: "bicarbonate", name: "Bicarbonate de sodium", form: "bain de bouche", strength: "1,4 %", posology: "Bain de bouche 3 fois par jour", duration: "7 jours" },
+  // Protection gastrique, avec un anti-inflammatoire — à valider
+  { key: "omeprazole-20", name: "Oméprazole", form: "gélule", strength: "20 mg", posology: "1 gélule le matin, à jeun", duration: "Pendant le traitement anti-inflammatoire" },
+];
+
+/** Composed from MEDICATION_DEFS only (prompts/29) — à valider. */
+const PACK_DEFS: {
+  name: string;
+  notes: string | null;
+  items: { key: string; remark?: string }[];
+}[] = [
+  {
+    name: "Post-extraction",
+    notes: "À valider par le praticien.",
+    items: [
+      { key: "paracetamol-1g" },
+      { key: "chlorhexidine-012", remark: "À commencer 24 heures après l’extraction." },
+    ],
+  },
+  {
+    name: "Infection dentaire",
+    notes: "À valider par le praticien. Vérifier les allergies avant de prescrire.",
+    items: [
+      { key: "amoxicilline-1g" },
+      { key: "metronidazole-500" },
+      { key: "paracetamol-1g" },
+    ],
+  },
+  {
+    name: "Douleur / inflammation",
+    notes: "À valider par le praticien.",
+    items: [
+      { key: "ibuprofene-400", remark: "Ne pas associer à un autre anti-inflammatoire." },
+      { key: "paracetamol-1g" },
+    ],
+  },
+];
+
+/** The V1 set — no creator, no deleter. Wording à valider. */
+const CERTIFICATE_TEMPLATE_DEFS = [
+  {
+    key: "presence",
+    title: "Certificat de présence / rendez-vous",
+    body: [
+      "Je soussigné(e), {{praticien}}, certifie que {{patient}}",
+      "CIN : {{cin}}",
+      "s’est présenté(e) au cabinet ce jour, le {{date}}, pour des soins dentaires.",
+      "",
+      "Certificat établi à la demande de l’intéressé(e) et remis en main propre pour servir et valoir ce que de droit.",
+    ].join("\n"),
+  },
+  {
+    key: "repos",
+    title: "Certificat de repos (arrêt de travail)",
+    body: [
+      "Je soussigné(e), {{praticien}}, certifie avoir examiné ce jour, le {{date}}, {{patient}}",
+      "CIN : {{cin}}",
+      "et que son état de santé bucco-dentaire nécessite un repos de {{jours}} jour(s), du {{debut}} au {{fin}} inclus, sauf complications.",
+      "",
+      "Certificat établi à la demande de l’intéressé(e) et remis en main propre pour servir et valoir ce que de droit.",
+    ].join("\n"),
+  },
+  {
+    key: "bon-etat",
+    title: "Certificat de bon état bucco-dentaire",
+    body: [
+      "Je soussigné(e), {{praticien}}, certifie avoir examiné ce jour, le {{date}}, {{patient}}",
+      "CIN : {{cin}}",
+      "et n’avoir constaté, à la date de l’examen, aucune affection bucco-dentaire nécessitant des soins immédiats.",
+      "",
+      "Certificat établi à la demande de l’intéressé(e) et remis en main propre pour servir et valoir ce que de droit.",
+    ].join("\n"),
+  },
+];
 
 // ── Names & addresses (invented) ────────────────────────────────────────────
 const MALE_FIRST = [
@@ -2142,6 +2269,197 @@ async function main() {
   // The patient in credit: this facture must read «Avance».
   addDocument(DocumentType.Invoice, advancePatient, advanceActs, issuedOn(1, "17:20"));
 
+  // ── Ordonnances & certificats (prompts/29) ────────────────────────────────
+  // The catalogue first, then two ordonnances and two certificats generated
+  // through the documents slice's OWN builders, numbering and certificate
+  // renderer — so their numbers and snapshots are real ones. Clinical
+  // content: «à valider» (see MEDICATION_DEFS).
+  const catalogueAt = at(clinicDay(-30), "08:30");
+  const medicationRows = MEDICATION_DEFS.map((def) => ({
+    id: nanoid(),
+    name: def.name,
+    nameKey: medicationNameKey(def.name, def.strength),
+    form: def.form,
+    strength: def.strength,
+    defaultPosology: def.posology,
+    defaultDuration: def.duration,
+    createdAt: catalogueAt,
+    updatedAt: catalogueAt,
+  }));
+  if (new Set(medicationRows.map((m) => m.nameKey)).size !== medicationRows.length) {
+    throw new Error("Seed: deux médicaments ont le même nom et dosage");
+  }
+  const medicationByKey = new Map(
+    MEDICATION_DEFS.map((def, index) => [def.key, medicationRows[index]]),
+  );
+  const packRows = PACK_DEFS.map((def) => ({
+    id: nanoid(),
+    name: def.name,
+    notes: def.notes,
+    createdAt: catalogueAt,
+    updatedAt: catalogueAt,
+  }));
+  const packItemRows = PACK_DEFS.flatMap((def, packIndex) =>
+    def.items.map((item, position) => {
+      const medication = medicationByKey.get(item.key);
+      if (!medication) throw new Error(`Seed: médicament inconnu ${item.key}`);
+      return {
+        id: nanoid(),
+        packId: packRows[packIndex].id,
+        medicationId: medication.id,
+        posology: medication.defaultPosology,
+        duration: medication.defaultDuration,
+        remark: item.remark ?? null,
+        position,
+      };
+    }),
+  );
+  const certificateTemplateRows = CERTIFICATE_TEMPLATE_DEFS.map((def, position) => {
+    // The same syntax check as the template editor.
+    const error = templateBodyError(def.body);
+    if (error) throw new Error(`Seed: modèle « ${def.key} » invalide — ${error}`);
+    return { id: nanoid(), ...def, position, createdAt: catalogueAt, updatedAt: catalogueAt };
+  });
+
+  const clinicSource = {
+    name: clinic.name,
+    address: clinic.address ?? null,
+    city: clinic.city ?? null,
+    phone: clinic.phone ?? null,
+    email: clinic.email ?? null,
+    ice: clinic.ice ?? null,
+    patente: clinic.patente ?? null,
+    fiscalId: clinic.fiscalId ?? null,
+    cnssNumber: clinic.cnssNumber ?? null,
+    inpe: clinic.inpe ?? null,
+    logoUrl: clinic.logoUrl ?? null,
+  };
+  const medicalPatient = (p: NewPatient) => ({
+    id: p.id,
+    shortCode: p.shortCode,
+    firstName: p.firstName,
+    lastName: p.lastName,
+    cin: p.cin ?? null,
+    birthDate: p.birthDate ?? null,
+  });
+  const practitionerOf = (staffId: string) => {
+    const s = staffById.get(staffId)!;
+    return { name: s.name, title: s.title ?? null, inpe: s.inpe ?? null };
+  };
+  const addMedicalRow = (
+    type: DocumentType.Prescription | DocumentType.Certificate,
+    patient: NewPatient,
+    issuedAt: Date,
+    staffId: string,
+    snapshot: (number: string) => Record<string, unknown>,
+  ) => {
+    const number = nextDocumentNumber(type, issuedAt, issuedNumbers);
+    issuedNumbers.push(number);
+    documentRows.push({
+      id: nanoid(),
+      patientId: patient.id,
+      type,
+      number,
+      fileName: buildDocumentFileName({
+        type,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        issuedAt,
+      }),
+      storageUrl: null,
+      snapshot: snapshot(number),
+      generatedByStaffId: staffId,
+      createdAt: issuedAt,
+    });
+  };
+  const addOrdonnance = (
+    patient: NewPatient,
+    packName: string,
+    issuedAt: Date,
+    staffId: string,
+  ) => {
+    const packIndex = PACK_DEFS.findIndex((def) => def.name === packName);
+    const lines = packItemRows
+      .filter((item) => item.packId === packRows[packIndex].id)
+      .map((item) => {
+        const medication = medicationRows.find((m) => m.id === item.medicationId)!;
+        return {
+          label: medication.name,
+          strength: medication.strength,
+          posology: item.posology,
+          duration: item.duration,
+          remark: item.remark,
+        };
+      });
+    addMedicalRow(DocumentType.Prescription, patient, issuedAt, staffId, (number) =>
+      buildPrescriptionSnapshot({
+        number,
+        issuedAt,
+        clinic: clinicSource,
+        patient: medicalPatient(patient),
+        practitioner: practitionerOf(staffId),
+        noHeader: false,
+        lines,
+      }) as Record<string, unknown>,
+    );
+  };
+  const addCertificat = (
+    patient: NewPatient,
+    templateKey: string,
+    period: { startDate?: string; endDate?: string },
+    issuedAt: Date,
+    staffId: string,
+  ) => {
+    const template = CERTIFICATE_TEMPLATE_DEFS.find((def) => def.key === templateKey)!;
+    const resolved = resolveCertificatePeriod(period);
+    if (!resolved.ok) throw new Error(`Seed: période invalide — ${resolved.error}`);
+    const practitioner = practitionerOf(staffId);
+    const rendered = renderCertificateBody(
+      template.body,
+      buildCertificateValues({
+        patient: { firstName: patient.firstName, lastName: patient.lastName, cin: patient.cin ?? null },
+        practitionerName: practitioner.name,
+        issuedAt,
+        period: resolved.period,
+      }),
+    );
+    if (!rendered.ok) throw new Error(`Seed: certificat « ${templateKey} » — ${rendered.error}`);
+    addMedicalRow(DocumentType.Certificate, patient, issuedAt, staffId, (number) =>
+      buildCertificateSnapshot({
+        number,
+        issuedAt,
+        clinic: clinicSource,
+        patient: medicalPatient(patient),
+        practitioner,
+        noHeader: false,
+        templateKey,
+        period: resolved.period,
+        body: rendered.text,
+      }) as Record<string, unknown>,
+    );
+  };
+
+  // The allergic patient (alertTargets[0], «Pénicilline») gets the pain pack:
+  // no antibiotic is seeded to a patient whose dossier says penicillin.
+  const allergicPatient = alertTargets.find((p) => hasText(p.allergies))!;
+  const medicalPatients = activePatients.filter(
+    (p) => !childIds.has(p.id) && !alertTargets.includes(p),
+  );
+  if (!allergicPatient || medicalPatients.length < 3) {
+    throw new Error("Seed: pas assez de patients pour les ordonnances et certificats");
+  }
+  addOrdonnance(allergicPatient, "Douleur / inflammation", issuedOn(5, "10:40"), STAFF.dentist.id);
+  addOrdonnance(medicalPatients[0], "Infection dentaire", issuedOn(4, "15:20"), adminId);
+  addCertificat(medicalPatients[1], "presence", {}, issuedOn(2, "11:05"), STAFF.dentist.id);
+  const restStart = toClinicDate(issuedOn(1, "12:00"));
+  addCertificat(
+    medicalPatients[2],
+    "repos",
+    { startDate: restStart, endDate: addCalendarDays(restStart, 2) },
+    issuedOn(1, "12:00"),
+    adminId,
+  );
+
   // ── Activité du jour — the last 7 clinic days ─────────────────────────────
   // Written through `logActivity` and the summary builders, exactly as the
   // procedures write them — the seed builds no `activityLog` row by hand.
@@ -2298,7 +2616,7 @@ async function main() {
       action: ActivityAction.Generated,
       patientId: d.patientId,
       summary: DOCUMENT_SUMMARIES.generated(
-        d.type as DocumentType.Invoice | DocumentType.Quote,
+        d.type as GeneratedDocumentType,
         d.number ?? "",
         nameOf(d.patientId),
       ),
@@ -2329,7 +2647,8 @@ async function main() {
       ${activityLog}, ${documents}, ${odontogramCharts}, ${payments}, ${treatments},
       ${appointments}, ${medicalHistories}, ${patientTags}, ${patients}, ${scheduleExceptions},
       ${practitionerSchedules}, ${appointmentTypes}, ${services}, ${tags}, ${insurers},
-      ${expenses}, ${tasks}, ${clinicSettings}
+      ${expenses}, ${tasks}, ${clinicSettings},
+      ${prescriptionPackItems}, ${prescriptionPacks}, ${medications}, ${certificateTemplates}
       CASCADE`),
     db.insert(clinicSettings).values(clinic),
     db.insert(insurers).values(insurerRows),
@@ -2355,6 +2674,10 @@ async function main() {
     db.insert(appointments).values(appointmentRows),
     db.insert(treatments).values(treatmentRows),
     db.insert(payments).values(paymentRows),
+    db.insert(medications).values(medicationRows),
+    db.insert(prescriptionPacks).values(packRows),
+    db.insert(prescriptionPackItems).values(packItemRows),
+    db.insert(certificateTemplates).values(certificateTemplateRows),
     db.insert(documents).values(documentRows),
     ...(odontogramRows.length > 0
       ? [db.insert(odontogramCharts).values(odontogramRows)]
@@ -2394,6 +2717,10 @@ async function main() {
     treatments: treatmentRows.length,
     payments: paymentRows.length,
     documents: documentRows.length,
+    medications: medicationRows.length,
+    prescriptionPacks: packRows.length,
+    prescriptionPackItems: packItemRows.length,
+    certificateTemplates: certificateTemplateRows.length,
     odontogramCharts: odontogramRows.length,
     activityLines: activityLines.length,
     insurancePayments: paymentRows.filter((p) => p.method === "insurance")

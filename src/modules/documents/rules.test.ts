@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import { documentType } from "@/database/schema";
 import { BILLABLE_TREATMENT_STATUSES } from "@/database/sql/billable";
 import { DOCUMENT_TYPE_LABELS, GENERATED_DOCUMENT_TYPE_VALUES } from "./constants";
+import { StaffRole } from "@/modules/staff/types";
 import {
+  canWriteMedicalDocuments,
   DOCUMENT_ELIGIBLE_STATUSES,
+  medicalWriteDenial,
   selectDocumentLines,
   sumSelectedCents,
 } from "./rules";
@@ -37,11 +40,14 @@ describe("document type enum", () => {
     }
   });
 
-  it("offers only the types generated today", () => {
+  it("offers only the types generated today — never the feuille de soins", () => {
     expect([...GENERATED_DOCUMENT_TYPE_VALUES]).toEqual([
       DocumentType.Invoice,
       DocumentType.Quote,
+      DocumentType.Prescription,
+      DocumentType.Certificate,
     ]);
+    expect(GENERATED_DOCUMENT_TYPE_VALUES).not.toContain(DocumentType.CareSheet);
   });
 });
 
@@ -111,5 +117,26 @@ describe("line selection", () => {
     expect(sumSelectedCents(items, ["a", "b"])).toBe(400000);
     expect(sumSelectedCents(items, ["b"])).toBe(150000);
     expect(sumSelectedCents(items, [])).toBe(0);
+  });
+});
+
+describe("who may write an ordonnance or a certificat (prompts/29, decision 3)", () => {
+  it.each([StaffRole.Admin, StaffRole.Dentist])("%s may", (role) => {
+    expect(medicalWriteDenial(role)).toBeNull();
+    expect(canWriteMedicalDocuments(role)).toBe(true);
+  });
+
+  it.each([StaffRole.Assistant, StaffRole.Secretary])(
+    "%s may not, and is told so in French",
+    (role) => {
+      expect(medicalWriteDenial(role)).toMatch(/administrateur ou un dentiste/);
+      expect(canWriteMedicalDocuments(role)).toBe(false);
+    },
+  );
+
+  it("a session still loading, or an unknown role, has no rights", () => {
+    expect(canWriteMedicalDocuments(undefined)).toBe(false);
+    expect(canWriteMedicalDocuments(null)).toBe(false);
+    expect(canWriteMedicalDocuments("superuser")).toBe(false);
   });
 });

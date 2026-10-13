@@ -19,7 +19,7 @@ export type ActivityStaffOption = ActivityOutputs["getStaff"][number];
 /**
  * What a row is about. Stored as text in `activity_log.entity_type` — values
  * written before branch 27 use the same four words; `odontogram` came with
- * branch 28.
+ * branch 28; the three catalogue entities with branch 29.
  */
 export enum ActivityEntityType {
   Appointment = "appointment",
@@ -27,6 +27,9 @@ export enum ActivityEntityType {
   Payment = "payment",
   Document = "document",
   Odontogram = "odontogram",
+  Medication = "medication",
+  PrescriptionPack = "prescription_pack",
+  CertificateTemplate = "certificate_template",
 }
 
 /** What happened to it. Stored as text in `activity_log.action`. */

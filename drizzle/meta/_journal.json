@@ -78,6 +78,13 @@
       "when": 1791669849370,
       "tag": "0010_activity_log_patient",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791802845235,
+      "tag": "0011_prescriptions_certificates",
+      "breakpoints": true
     }
   ]
 }

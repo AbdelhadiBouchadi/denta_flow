@@ -1,6 +1,7 @@
+import type { StaffRole } from "@/modules/staff/types";
 import { TreatmentStatus } from "@/modules/treatments/types";
-import { DOCUMENT_SERVER_ERRORS } from "./constants";
-import { DocumentType, type GeneratedDocumentType } from "./types";
+import { DOCUMENT_SERVER_ERRORS, MEDICAL_WRITER_ROLES } from "./constants";
+import { DocumentType, type BillingDocumentType } from "./types";
 
 /**
  * Which actes a document may name — pure, shared by the generate dialog (what
@@ -14,7 +15,7 @@ import { DocumentType, type GeneratedDocumentType } from "./types";
  * - A DEVIS names `planned` actes only, and never mentions payments.
  */
 export const DOCUMENT_ELIGIBLE_STATUSES: Record<
-  GeneratedDocumentType,
+  BillingDocumentType,
   readonly TreatmentStatus[]
 > = {
   [DocumentType.Invoice]: [TreatmentStatus.InProgress, TreatmentStatus.Completed],
@@ -22,7 +23,7 @@ export const DOCUMENT_ELIGIBLE_STATUSES: Record<
 };
 
 export const isEligibleForDocument = (
-  type: GeneratedDocumentType,
+  type: BillingDocumentType,
   status: string,
 ) => (DOCUMENT_ELIGIBLE_STATUSES[type] as readonly string[]).includes(status);
 
@@ -53,7 +54,7 @@ export const selectDocumentLines = <T extends Candidate>({
   requestedIds,
   rows,
 }: {
-  type: GeneratedDocumentType;
+  type: BillingDocumentType;
   patientId: string;
   requestedIds: readonly string[];
   rows: readonly T[];
@@ -93,3 +94,23 @@ export const sumSelectedCents = (
     0,
   );
 };
+
+// ── Medical documents (prompts/29, decision 3) ──────────────────────────────
+
+/**
+ * Why a staff member may not write an ordonnance or a certificat — or manage
+ * medications, packs and certificate templates — in French; `null` when they
+ * may. Writing one is a medical act: admin and dentist only. The procedures
+ * are the authority; the UI calls the same function only to hide buttons.
+ * `undefined` (a client session still loading) has no rights.
+ */
+export const medicalWriteDenial = (
+  role: StaffRole | string | null | undefined,
+) =>
+  MEDICAL_WRITER_ROLES.includes(role as StaffRole)
+    ? null
+    : DOCUMENT_SERVER_ERRORS.medicalForbidden;
+
+export const canWriteMedicalDocuments = (
+  role: StaffRole | string | null | undefined,
+) => medicalWriteDenial(role) === null;

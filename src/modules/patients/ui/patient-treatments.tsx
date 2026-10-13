@@ -26,7 +26,7 @@ import {
 } from "@/modules/documents/constants";
 import {
   DocumentType,
-  type GeneratedDocumentType,
+  type BillingDocumentType,
 } from "@/modules/documents/types";
 import GenerateDocumentDialog, {
   useEligibleActes,
@@ -56,7 +56,7 @@ import GenerateDocumentButton from "./generate-document-button";
 /** The toolbar's document shortcuts — the reference's buttons under the actes. */
 const COPY = {
   /** «Devis (2)»: the patient's documents of that type, removed ones excluded. */
-  shortcut: (type: GeneratedDocumentType, count: number) =>
+  shortcut: (type: BillingDocumentType, count: number) =>
     `${DOCUMENT_TYPE_LABELS[type]} (${count})`,
   history: "Historique des documents",
 } as const;
@@ -91,7 +91,7 @@ const PatientTreatments = ({ patient }: PatientTreatmentsProps) => {
   const [, setTab] = usePatientTab();
   // Dialog state, not page state.
   const [isCreating, setIsCreating] = useState(false);
-  const [generating, setGenerating] = useState<GeneratedDocumentType | null>(
+  const [generating, setGenerating] = useState<BillingDocumentType | null>(
     null,
   );
 

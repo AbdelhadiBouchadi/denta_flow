@@ -11,6 +11,7 @@ vi.mock("server-only", () => ({}));
 import { formatDH } from "@/lib/format";
 import { BillingDocument, type BillingDocumentProps } from "./billing-document";
 import { PDF_FONT_DIR, PDF_FONT_FILES, registerPdfFonts } from "./fonts";
+import { MedicalDocument, type MedicalDocumentProps } from "./medical-document";
 
 /**
  * The vendored font must carry every character the PDFs print — the amount
@@ -23,6 +24,8 @@ const SAMPLES = [
   "Valable jusqu’au « Cachet et signature » N° Étienne Ça Œuvre ïôûèêëàâç",
   // The French spaces: no-break and narrow no-break.
   String.fromCodePoint(0x00a0, 0x202f),
+  // Typical dosage glyphs on an ordonnance (prompts/29).
+  "1 g · 0,12 % · 500 mg · 1 cp × 3/j · ½ comprimé · CERTIFICAT MÉDICAL",
 ];
 
 /**
@@ -129,5 +132,59 @@ describe("BillingDocument", () => {
     expect(buffer.subarray(0, 4).toString("latin1")).toBe("%PDF");
     // The TTF is embedded (subset) — not a standard font fallback.
     expect(buffer.toString("latin1")).toContain("NotoSans");
+  }, 30_000);
+});
+
+const medicalProps = (
+  content: MedicalDocumentProps["content"],
+  withHeader: boolean,
+): MedicalDocumentProps => ({
+  documentTitle: "ORDONNANCE N° O-2026-0001",
+  author: "Cabinet",
+  header: withHeader
+    ? { logo: null, name: "Cabinet", lines: ["Agadir"], identifiers: "" }
+    : null,
+  title: "ORDONNANCE N° O-2026-0001",
+  details: [{ label: "Date", value: "12/10/2026" }],
+  recipient: { heading: "Patient", lines: ["BENALI Karim", "35 ans"] },
+  content,
+  placeAndDate: "Fait à Agadir, le 12/10/2026",
+  signature: { lines: ["Dr Test"], label: "Cachet et signature" },
+  pageLabel: (page, total) => `Page ${page}/${total}`,
+});
+
+describe("MedicalDocument", () => {
+  it("renders an ordonnance, with and without the clinic header", async () => {
+    registerPdfFonts();
+    const lines = {
+      kind: "lines" as const,
+      lines: [
+        {
+          key: "0",
+          marker: "1.",
+          heading: "Chlorhexidine 0,12 %",
+          detail: "½ dose × 3/j · Durée : 7 jours",
+          remark: "Ne pas avaler",
+        },
+      ],
+    };
+    for (const withHeader of [true, false]) {
+      const buffer = await renderToBuffer(
+        createElement(MedicalDocument, medicalProps(lines, withHeader)),
+      );
+      expect(buffer.subarray(0, 4).toString("latin1")).toBe("%PDF");
+      expect(buffer.toString("latin1")).toContain("NotoSans");
+    }
+  }, 30_000);
+
+  it("renders a certificat's plain text, line breaks kept", async () => {
+    registerPdfFonts();
+    const buffer = await renderToBuffer(
+      createElement(
+        MedicalDocument,
+        medicalProps({ kind: "text", text: ["Ligne 1", "Ligne 2"].join("\n") }, true),
+      ),
+    );
+    expect(buffer.subarray(0, 4).toString("latin1")).toBe("%PDF");
   }, 30_000);
 });

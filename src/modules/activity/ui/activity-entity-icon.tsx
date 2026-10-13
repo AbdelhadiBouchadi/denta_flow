@@ -1,7 +1,9 @@
 import {
   BanknoteIcon,
   CalendarIcon,
+  FileSignatureIcon,
   FileTextIcon,
+  PillIcon,
   SmileIcon,
   StethoscopeIcon,
   type LucideIcon,
@@ -22,6 +24,9 @@ const ICONS: Record<ActivityEntityType, LucideIcon> = {
   [ActivityEntityType.Document]: FileTextIcon,
   // No tooth in lucide either: the chart reads as the mouth.
   [ActivityEntityType.Odontogram]: SmileIcon,
+  [ActivityEntityType.Medication]: PillIcon,
+  [ActivityEntityType.PrescriptionPack]: PillIcon,
+  [ActivityEntityType.CertificateTemplate]: FileSignatureIcon,
 };
 
 /** The badge palette's tints (06-ui.md §4) — tokens only, never a hex. */
