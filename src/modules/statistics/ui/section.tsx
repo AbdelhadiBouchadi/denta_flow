@@ -142,6 +142,7 @@ interface SectionProps {
   description: string;
   /** The body's height, shared by the chart, its skeleton and its states. */
   heightClass: string;
+  /** Grid placement (`xl:col-span-2`…), held by a wrapper every state shares. */
   className?: string;
   children: React.ReactNode;
 }
@@ -149,7 +150,9 @@ interface SectionProps {
 /**
  * A chart card inside its boundaries. The skeleton and the error keep the
  * card's title and the body's height: no layout jump when the data lands
- * or fails.
+ * or fails. The loaded chart renders its own `SectionCard`, so the grid
+ * placement lives on a wrapper, not on the card — or it would vanish once
+ * the data lands.
  */
 export const Section = ({
   title,
@@ -159,25 +162,27 @@ export const Section = ({
   children,
 }: SectionProps) => {
   const shell = (body: React.ReactNode) => (
-    <SectionCard title={title} description={description} className={className}>
+    <SectionCard title={title} description={description}>
       {body}
     </SectionCard>
   );
 
   return (
-    <SectionBoundary
-      loading={shell(
-        <Skeleton
-          role="status"
-          aria-label={COPY.loading}
-          className={cn("w-full rounded-lg", heightClass)}
-        />,
-      )}
-      renderError={(body) =>
-        shell(<div className={cn("flex flex-col", heightClass)}>{body}</div>)
-      }
-    >
-      {children}
-    </SectionBoundary>
+    <div className={cn("flex min-w-0 flex-col *:flex-1", className)}>
+      <SectionBoundary
+        loading={shell(
+          <Skeleton
+            role="status"
+            aria-label={COPY.loading}
+            className={cn("w-full rounded-lg", heightClass)}
+          />,
+        )}
+        renderError={(body) =>
+          shell(<div className={cn("flex flex-col", heightClass)}>{body}</div>)
+        }
+      >
+        {children}
+      </SectionBoundary>
+    </div>
   );
 };
