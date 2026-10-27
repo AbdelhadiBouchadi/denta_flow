@@ -44,9 +44,9 @@ import {
   createTRPCRouter,
   protectedProcedure,
 } from "@/trpc/init";
+import { editPatch } from "../approval";
 import {
-  DEFAULT_MANUAL_TEXTS,
-  ENV_CHECKLIST,
+  DEFAULT_BODIES,
   EVENT_LABELS,
   JOURNAL_DEFAULT_DAYS,
   JOURNAL_MAX_RANGE_DAYS,
@@ -55,11 +55,18 @@ import {
   WHATSAPP_ERRORS,
   WHATSAPP_VALIDATION,
   formatTiming,
+  rejectionReasonLabel,
 } from "../constants";
-import { manualSendRefusal } from "../manual";
-import { buildMessageParams, renderManualText, SAMPLE_PARAMS } from "../message";
+import { manualSendOffered, manualSendRefusal } from "../manual";
+import { buildMessageParams, formatClinicPhone, SAMPLE_PARAMS } from "../message";
 import { isEnvComplete, resolveMode } from "../mode";
-import { maskPhone, toWhatsAppNumber, waMeLink } from "../phone";
+import { ENV_KEYS } from "../provider-constants";
+import {
+  formatSenderNumber,
+  maskPhone,
+  toWhatsAppNumber,
+  waMeLink,
+} from "../phone";
 import {
   isOffsetValid,
   ruleConstraintError,
@@ -77,18 +84,37 @@ import {
   ruleUpdateSchema,
   sendTestSchema,
   settingsUpdateSchema,
-  templateFormSchema,
+  templateCreateSchema,
+  templateIdSchema,
   templateUpdateSchema,
   unitMinutes,
 } from "../schemas";
 import { canRetry } from "../status";
 import {
+  chipValuesFrom,
+  fromCanonical,
+  MalformedBodyError,
+  renderCanonical,
+  renderSegments,
+  sameCanonical,
+  toCanonical,
+} from "../template-body";
+import {
+  MessageChip,
+  TemplateApproval,
   UnscheduledReason,
   WhatsappConsent,
   WhatsappEvent,
   WhatsappMessageStatus,
   WhatsappMode,
+  type BodySegment,
 } from "../types";
+import {
+  contentApiFor,
+  refreshTemplateStatuses,
+  submissionAvailability,
+  submitTemplateForApproval,
+} from "./approval";
 import { createTwilioProvider } from "./provider/twilio";
 import { readWhatsappEnv, webhookUrl } from "./provider/twilio-env";
 import { attentionCountQuery } from "./queries";
@@ -203,7 +229,10 @@ const selectMessageRows = () =>
         consent: patients.whatsappConsent,
       },
       practitioner: { name: user.name },
-      template: { manualText: whatsappTemplates.manualText },
+      template: {
+        body: whatsappTemplates.body,
+        variables: whatsappTemplates.variables,
+      },
     })
     .from(whatsappMessages)
     .innerJoin(appointments, eq(whatsappMessages.appointmentId, appointments.id))
@@ -214,12 +243,12 @@ const selectMessageRows = () =>
 
 type MessageRow = Awaited<ReturnType<ReturnType<typeof selectMessageRows>["where"]>>[number];
 
+/** The text a manual send opens with — the template's CURRENT text. */
 const manualTextFor = (
   row: MessageRow,
   clinic: { name: string; phone: string | null },
-) =>
-  renderManualText(
-    row.template?.manualText ?? DEFAULT_MANUAL_TEXTS[row.event as WhatsappEvent],
+) => {
+  const values = chipValuesFrom(
     buildMessageParams({
       firstName: row.patient.firstName,
       startsAt: row.forStartsAt,
@@ -227,6 +256,13 @@ const manualTextFor = (
       clinicPhone: clinic.phone ?? "",
     }),
   );
+  return row.template?.body
+    ? renderCanonical(
+        { body: row.template.body, variables: row.template.variables as MessageChip[] },
+        values,
+      )
+    : renderSegments(DEFAULT_BODIES[row.event as WhatsappEvent], values);
+};
 
 const refusalFor = (row: MessageRow) =>
   manualSendRefusal({
@@ -238,13 +274,25 @@ const refusalFor = (row: MessageRow) =>
     phone: row.patient.phone,
   });
 
-/** What a list may show of a row — masked number, never the full one. */
+/**
+ * What a list may show of a row — masked number, never the full one. A
+ * `waLink` only where a manual send is offered in this mode (33b): every
+ * row in manual mode, only rows to rescue otherwise.
+ */
 const toListRow = (
   row: MessageRow,
   clinic: { name: string; phone: string | null },
+  mode: WhatsappMode,
 ) => {
   const number = toWhatsAppNumber(row.patient.phone);
-  const manualAllowed = refusalFor(row) === null && number.ok;
+  const manualAllowed =
+    manualSendOffered({
+      mode,
+      status: row.status as WhatsappMessageStatus,
+      skipReason: row.skipReason,
+    }) &&
+    refusalFor(row) === null &&
+    number.ok;
   return {
     key: row.id,
     messageId: row.id as string | null,
@@ -336,6 +384,79 @@ const ruleSummary = (
 ) =>
   `${verb} la règle WhatsApp « ${templateName} » (${EVENT_LABELS[event]}, ${formatTiming(event, offsetMinutes)})`;
 
+// ── Templates: shared (prompts/33b) ─────────────────────────────────────────
+
+/**
+ * The stored body as the editor's text and chips. A body that cannot be read
+ * back (damaged data) shows as its plain text without placeholders, so the
+ * admin can rewrite it — never as a crash, never with braces.
+ */
+const segmentsOf = (template: { body: string; variables: unknown }): BodySegment[] => {
+  try {
+    return fromCanonical({
+      body: template.body,
+      variables: template.variables as MessageChip[],
+    });
+  } catch (error) {
+    if (!(error instanceof MalformedBodyError)) throw error;
+    return [{ type: "text", text: template.body.replace(/\{\{\d+\}\}|[{}]/g, "") }];
+  }
+};
+
+/** The schema already validated the segments; this only converts them. */
+const canonicalOrThrow = (segments: BodySegment[]) => {
+  try {
+    return toCanonical(segments);
+  } catch {
+    throw badRequest(WHATSAPP_VALIDATION.bodyInvalid);
+  }
+};
+
+/** Submission needs a real sender's credentials; the sandbox has no templates. */
+const assertSubmissionAvailable = () => {
+  const twilio = readWhatsappEnv().twilio;
+  const availability = submissionAvailability(twilio);
+  if (availability === "sandbox") throw badRequest(WHATSAPP_ERRORS.approvalSandbox);
+  if (availability === "unavailable" || !twilio) {
+    throw badRequest(WHATSAPP_ERRORS.approvalUnavailable);
+  }
+  return twilio;
+};
+
+/** The activity line of one submission — the provider's code if it failed. */
+const logSubmission = (
+  staffId: string,
+  templateId: string,
+  name: string,
+  outcome: Awaited<ReturnType<typeof submitTemplateForApproval>>,
+) =>
+  outcome.submitted
+    ? logWhatsapp(
+        staffId,
+        templateId,
+        ActivityAction.Updated,
+        `Modèle WhatsApp « ${name} » envoyé pour validation`,
+      )
+    : "failure" in outcome
+      ? logWhatsapp(
+          staffId,
+          templateId,
+          ActivityAction.Updated,
+          `Échec de l’envoi pour validation du modèle WhatsApp « ${name} » (code ${outcome.failure.code})`,
+        )
+      : Promise.resolve();
+
+/** Submits one template; a provider failure becomes a French error. */
+const submitOrThrow = async (templateId: string, name: string, staffId: string) => {
+  const twilio = assertSubmissionAvailable();
+  const outcome = await submitTemplateForApproval(templateId, contentApiFor(twilio));
+  await logSubmission(staffId, templateId, name, outcome);
+  if ("failure" in outcome) {
+    throw new TRPCError({ code: "BAD_GATEWAY", message: WHATSAPP_ERRORS.approvalFailed });
+  }
+  return { status: outcome.status };
+};
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 export const whatsappRouter = createTRPCRouter({
@@ -426,7 +547,8 @@ export const whatsappRouter = createTRPCRouter({
         };
       });
 
-    const items = [...messages.map((row) => toListRow(row, clinic)), ...unscheduled].sort(
+    const { whatsappEnv, mode } = currentMode(settings.enabled);
+    const items = [...messages.map((row) => toListRow(row, clinic, mode)), ...unscheduled].sort(
       (a, b) =>
         a.startsAt.getTime() - b.startsAt.getTime() ||
         (a.scheduledFor?.getTime() ?? 0) - (b.scheduledFor?.getTime() ?? 0),
@@ -437,13 +559,17 @@ export const whatsappRouter = createTRPCRouter({
 
     return {
       day,
-      mode: currentMode(settings.enabled).mode,
+      mode,
+      // Manual mode has two causes the page words differently: never
+      // connected, or connected with the switch off.
+      connected: whatsappEnv.complete,
       hasRules: ruleCount.count > 0,
       items,
       counts: {
         scheduled: has(WhatsappMessageStatus.Scheduled, WhatsappMessageStatus.Sending),
         sent: has(WhatsappMessageStatus.Sent, WhatsappMessageStatus.ManualOpened),
-        delivered: has(WhatsappMessageStatus.Delivered, WhatsappMessageStatus.Read),
+        delivered: has(WhatsappMessageStatus.Delivered),
+        read: has(WhatsappMessageStatus.Read),
         attention: has(WhatsappMessageStatus.NeedsAttention, WhatsappMessageStatus.Failed),
       },
     };
@@ -491,11 +617,23 @@ export const whatsappRouter = createTRPCRouter({
   openManual: protectedProcedure
     .input(messageIdSchema)
     .mutation(async ({ input, ctx }) => {
-      const [[row], clinic] = await Promise.all([
+      const [[row], clinic, settings] = await Promise.all([
         selectMessageRows().where(eq(whatsappMessages.id, input.id)).limit(1),
         readClinic(),
+        readSettings(),
       ]);
       if (!row) throw notFound(WHATSAPP_ERRORS.messageNotFound);
+
+      // The list and the action agree: a healthy automatic row is not sent by hand.
+      if (
+        !manualSendOffered({
+          mode: currentMode(settings.enabled).mode,
+          status: row.status as WhatsappMessageStatus,
+          skipReason: row.skipReason,
+        })
+      ) {
+        throw badRequest(WHATSAPP_ERRORS.manualNotNeeded);
+      }
 
       const refusal = refusalFor(row);
       if (refusal) throw badRequest(refusal);
@@ -616,7 +754,7 @@ export const whatsappRouter = createTRPCRouter({
     );
 
     const offset = (input.page - 1) * JOURNAL_PAGE_SIZE;
-    const [rows, [totals], clinic] = await Promise.all([
+    const [rows, [totals], clinic, settings] = await Promise.all([
       selectMessageRows()
         .where(where)
         .orderBy(desc(at), desc(whatsappMessages.id))
@@ -629,13 +767,15 @@ export const whatsappRouter = createTRPCRouter({
         .innerJoin(patients, eq(appointments.patientId, patients.id))
         .where(where),
       readClinic(),
+      readSettings(),
     ]);
+    const { mode } = currentMode(settings.enabled);
 
     return {
       from,
       to,
       items: rows.map((row) => ({
-        ...toListRow(row, clinic),
+        ...toListRow(row, clinic, mode),
         // The journal never opens WhatsApp: that is «Rappels»' job.
         waLink: null,
         at: row.sentAt ?? row.scheduledFor,
@@ -654,31 +794,37 @@ export const whatsappRouter = createTRPCRouter({
       countsSince(new Date(now.getTime() - 7 * 24 * 3_600_000)),
     ]);
     const { whatsappEnv, mode } = currentMode(settings.enabled);
+    const connected = isEnvComplete(whatsappEnv.presence);
+    const sandboxSender = whatsappEnv.twilio?.sandbox ?? false;
 
     return {
       mode,
       enabled: settings.enabled,
-      envComplete: isEnvComplete(whatsappEnv.presence),
-      // Booleans only — never a value.
-      env: ENV_CHECKLIST.map((entry) => ({
-        key: entry.key,
-        label: entry.label,
-        present: whatsappEnv.presence[entry.key],
-      })),
-      sandboxSender: whatsappEnv.twilio?.sandbox ?? false,
+      connected,
+      sandboxSender,
+      // The sender as a person reads it — never a credential.
+      senderNumber: connected ? formatSenderNumber(whatsappEnv.from) : null,
       clinicPhonePresent: clinic.phone !== null,
-      webhookUrl: webhookUrl(),
-      lastCron: settings.lastCronAt
-        ? {
-            at: settings.lastCronAt,
-            claimed: settings.lastCronClaimed,
-            sent: settings.lastCronSent,
-            failed: settings.lastCronFailed,
-            needsAttention: settings.lastCronNeedsAttention,
-          }
-        : null,
-      counts24h: toCounts(last24h),
-      counts7d: toCounts(last7d),
+      // 33b: templates are submitted for approval with a real sender only.
+      templateSubmission: submissionAvailability(whatsappEnv.twilio),
+      // Rules warn about unapproved templates where approval will matter.
+      approvalRequired: connected && !sandboxSender,
+      // «Diagnostic technique» only. Booleans for the env — never a value.
+      diagnostic: {
+        env: ENV_KEYS.map((key) => ({ key, present: whatsappEnv.presence[key] })),
+        webhookUrl: webhookUrl(),
+        lastCron: settings.lastCronAt
+          ? {
+              at: settings.lastCronAt,
+              claimed: settings.lastCronClaimed,
+              sent: settings.lastCronSent,
+              failed: settings.lastCronFailed,
+              needsAttention: settings.lastCronNeedsAttention,
+            }
+          : null,
+        counts24h: toCounts(last24h),
+        counts7d: toCounts(last7d),
+      },
     };
   }),
 
@@ -705,7 +851,7 @@ export const whatsappRouter = createTRPCRouter({
 
       if (input.enabled && !before.enabled) {
         if (!isEnvComplete(whatsappEnv.presence)) {
-          throw badRequest(WHATSAPP_ERRORS.envIncomplete);
+          throw badRequest(WHATSAPP_ERRORS.notConnected);
         }
         if (!clinic.phone) throw badRequest(WHATSAPP_ERRORS.clinicPhoneMissing);
       }
@@ -722,7 +868,7 @@ export const whatsappRouter = createTRPCRouter({
           ? input.enabled
             ? "Envois WhatsApp automatiques activés"
             : "Envois WhatsApp automatiques désactivés"
-          : `Réglages WhatsApp modifiés (plage ${input.windowStart}–${input.windowEnd}, délai minimum ${input.minLeadMinutes} min)`;
+          : `Réglages WhatsApp modifiés (heures d’envoi ${input.windowStart}–${input.windowEnd}, délai minimum ${input.minLeadMinutes / 60} h)`;
 
       try {
         await db.batch([
@@ -754,56 +900,96 @@ export const whatsappRouter = createTRPCRouter({
       return { backfilled };
     }),
 
-  // ── Admin: templates ──────────────────────────────────────────────────────
+  // ── Admin: templates (prompts/33b) ────────────────────────────────────────
 
-  listTemplates: adminProcedure.query(async () => {
-    const [templates, rules] = await Promise.all([
+  /**
+   * The templates as the editor reads them: the message as text and chips
+   * (never the placeholder body, never a resource id), the approval status,
+   * a French rejection reason, and whether an approved version is active.
+   */
+  getTemplates: adminProcedure.query(async () => {
+    const [templates, rules, clinic] = await Promise.all([
       db
         .select()
         .from(whatsappTemplates)
         .orderBy(asc(whatsappTemplates.kind), asc(whatsappTemplates.name)),
       readRules(),
+      readClinic(),
     ]);
     const used = new Set(rules.map((rule) => rule.templateId));
     return {
+      // The preview shows the clinic's real name and phone (decision 5).
+      preview: {
+        [MessageChip.ClinicName]: clinic.name,
+        ...(clinic.phone ? { [MessageChip.ClinicPhone]: formatClinicPhone(clinic.phone) } : {}),
+      },
       items: templates.map((template) => ({
-        ...template,
+        id: template.id,
+        name: template.name,
         kind: template.kind as WhatsappEvent,
+        isActive: template.isActive,
         isUsed: used.has(template.id),
+        segments: segmentsOf(template),
+        approvalStatus: template.approvalStatus as TemplateApproval,
+        rejectionReason:
+          template.approvalStatus === TemplateApproval.Rejected
+            ? rejectionReasonLabel(template.rejectionReason)
+            : null,
+        submittedAt: template.submittedAt,
+        approvedAt: template.approvedAt,
+        hasApprovedVersion: template.activeContentSid !== null,
       })),
     };
   }),
 
+  /** «Enregistrer» / «Enregistrer et envoyer pour validation». */
   createTemplate: adminProcedure
-    .input(templateFormSchema)
+    .input(templateCreateSchema)
     .mutation(async ({ input, ctx }) => {
+      const { submit, segments, ...values } = input;
+      if (submit) assertSubmissionAvailable();
+      const canonical = canonicalOrThrow(segments);
+
       const id = nanoid();
       try {
-        const [[created]] = await db.batch([
-          db
-            .insert(whatsappTemplates)
-            .values({ id, ...input })
-            .returning(),
+        await db.batch([
+          db.insert(whatsappTemplates).values({
+            id,
+            ...values,
+            body: canonical.body,
+            variables: canonical.variables,
+            approvalStatus: TemplateApproval.Draft,
+          }),
           logWhatsapp(
             ctx.auth.user.id,
             id,
             ActivityAction.Created,
-            `Modèle WhatsApp « ${input.name} » créé`,
+            `Modèle WhatsApp « ${values.name} » créé`,
           ),
         ]);
-        return created;
       } catch (error) {
         if (postgresErrorCode(error) === UNIQUE_VIOLATION) {
           throw new TRPCError({ code: "CONFLICT", message: WHATSAPP_ERRORS.templateNameTaken });
         }
         throw error;
       }
+
+      if (submit) await submitOrThrow(id, values.name, ctx.auth.user.id);
+      return { id };
     }),
 
+  /**
+   * A new text becomes a new draft; the approved version, if any, keeps
+   * sending until its replacement is approved (decision 6). A name, kind or
+   * «Actif» change alone leaves the approval as it is.
+   */
   updateTemplate: adminProcedure
     .input(templateUpdateSchema)
     .mutation(async ({ input, ctx }) => {
-      const { id, ...values } = input;
+      const { id, submit, segments, ...values } = input;
+      if (submit) assertSubmissionAvailable();
+      const canonical = canonicalOrThrow(segments);
+
       const [[existing], rules] = await Promise.all([
         db.select().from(whatsappTemplates).where(eq(whatsappTemplates.id, id)).limit(1),
         readRules(),
@@ -817,21 +1003,30 @@ export const whatsappRouter = createTRPCRouter({
       );
       if (kindError) throw badRequest(kindError);
 
+      const bodyChanged = !sameCanonical(canonical, {
+        body: existing.body,
+        variables: existing.variables as MessageChip[],
+      });
+
       try {
-        const [[updated]] = await db.batch([
+        await db.batch([
           db
             .update(whatsappTemplates)
-            .set({ ...values, updatedAt: new Date() })
-            .where(eq(whatsappTemplates.id, id))
-            .returning(),
+            .set({
+              ...values,
+              body: canonical.body,
+              variables: canonical.variables,
+              ...editPatch(bodyChanged),
+              updatedAt: new Date(),
+            })
+            .where(eq(whatsappTemplates.id, id)),
           logWhatsapp(
             ctx.auth.user.id,
             id,
             ActivityAction.Updated,
-            `Modèle WhatsApp « ${values.name} » modifié`,
+            `Modèle WhatsApp « ${values.name} » modifié`,
           ),
         ]);
-        return updated;
       } catch (error) {
         const code = postgresErrorCode(error);
         if (code === UNIQUE_VIOLATION) {
@@ -841,10 +1036,73 @@ export const whatsappRouter = createTRPCRouter({
         if (code === FOREIGN_KEY_VIOLATION) throw badRequest(WHATSAPP_ERRORS.templateKindInUse);
         throw error;
       }
+
+      if (submit) await submitOrThrow(id, values.name, ctx.auth.user.id);
+      return { id };
     }),
 
+  /** «Envoyer pour validation» / «Corriger et renvoyer» — idempotent. */
+  submitTemplate: adminProcedure
+    .input(templateIdSchema)
+    .mutation(async ({ input, ctx }) => {
+      assertSubmissionAvailable();
+      const [template] = await db
+        .select({ name: whatsappTemplates.name })
+        .from(whatsappTemplates)
+        .where(eq(whatsappTemplates.id, input.id))
+        .limit(1);
+      if (!template) throw notFound(WHATSAPP_ERRORS.templateNotFound);
+      return submitOrThrow(input.id, template.name, ctx.auth.user.id);
+    }),
+
+  /**
+   * «Envoyer tous les modèles pour validation»: every active draft, one by
+   * one. Idempotent — a template already pending or approved is skipped, and
+   * a second click finds no draft left.
+   */
+  submitAllDrafts: adminProcedure.mutation(async ({ ctx }) => {
+    const twilio = assertSubmissionAvailable();
+    const drafts = await db
+      .select({ id: whatsappTemplates.id, name: whatsappTemplates.name })
+      .from(whatsappTemplates)
+      .where(
+        and(
+          eq(whatsappTemplates.approvalStatus, TemplateApproval.Draft),
+          eq(whatsappTemplates.isActive, true),
+        ),
+      )
+      .orderBy(asc(whatsappTemplates.kind), asc(whatsappTemplates.name));
+
+    const api = contentApiFor(twilio);
+    let submitted = 0;
+    let failed = 0;
+    for (const draft of drafts) {
+      const outcome = await submitTemplateForApproval(draft.id, api);
+      if (outcome.submitted) submitted++;
+      if ("failure" in outcome) failed++;
+      await logSubmission(ctx.auth.user.id, draft.id, draft.name, outcome);
+    }
+    return { submitted, failed };
+  }),
+
+  /** «Actualiser», and the Modèles tab on open: the pending verdicts now. */
+  refreshTemplateStatuses: adminProcedure.mutation(async () => {
+    const twilio = readWhatsappEnv().twilio;
+    if (submissionAvailability(twilio) !== "available") {
+      return { checked: 0, approved: 0, rejected: 0, errors: 0, released: 0 };
+    }
+    const summary = await refreshTemplateStatuses(contentApiFor(twilio!));
+    if (summary.checked > 0 && summary.errors === summary.checked) {
+      throw new TRPCError({
+        code: "BAD_GATEWAY",
+        message: WHATSAPP_ERRORS.approvalRefreshFailed,
+      });
+    }
+    return summary;
+  }),
+
   removeTemplate: adminProcedure
-    .input(messageIdSchema)
+    .input(templateIdSchema)
     .mutation(async ({ input, ctx }) => {
       const [[existing], rules] = await Promise.all([
         db
@@ -865,7 +1123,7 @@ export const whatsappRouter = createTRPCRouter({
             ctx.auth.user.id,
             input.id,
             ActivityAction.Deleted,
-            `Modèle WhatsApp « ${existing.name} » supprimé`,
+            `Modèle WhatsApp « ${existing.name} » supprimé`,
           ),
         ]);
       } catch (error) {
@@ -891,7 +1149,9 @@ export const whatsappRouter = createTRPCRouter({
           id: whatsappTemplates.id,
           name: whatsappTemplates.name,
           isActive: whatsappTemplates.isActive,
-          contentSid: whatsappTemplates.contentSid,
+          // Whether the rule can send in automatic mode (33b) — a boolean,
+          // never the resource id.
+          hasApprovedVersion: sql<boolean>`${whatsappTemplates.activeContentSid} IS NOT NULL`,
         },
       })
       .from(whatsappRules)
@@ -1139,16 +1399,19 @@ export const whatsappRouter = createTRPCRouter({
     .input(sendTestSchema)
     .mutation(async ({ input, ctx }) => {
       const { whatsappEnv } = currentMode(true);
-      if (!whatsappEnv.twilio) throw badRequest(WHATSAPP_ERRORS.envIncomplete);
+      if (!whatsappEnv.twilio) throw badRequest(WHATSAPP_ERRORS.notConnected);
       const number = toWhatsAppNumber(input.phone);
       if (!number.ok) throw badRequest(WHATSAPP_ERRORS.invalidPhone);
+      const sandbox = whatsappEnv.twilio.sandbox;
 
       // The template an enabled rule uses for this event, else any active one.
       const [[template], clinic] = await Promise.all([
         db
           .select({
-            contentSid: whatsappTemplates.contentSid,
-            manualText: whatsappTemplates.manualText,
+            activeContentSid: whatsappTemplates.activeContentSid,
+            activeVariables: whatsappTemplates.activeVariables,
+            body: whatsappTemplates.body,
+            variables: whatsappTemplates.variables,
           })
           .from(whatsappTemplates)
           .leftJoin(whatsappRules, eq(whatsappRules.templateId, whatsappTemplates.id))
@@ -1163,11 +1426,22 @@ export const whatsappRouter = createTRPCRouter({
         readClinic(),
       ]);
 
+      // Outside the sandbox only an approved resource can go: say so in
+      // French rather than let the provider refuse it.
+      if (!sandbox && !template?.activeContentSid) {
+        throw badRequest(WHATSAPP_ERRORS.testTemplateUnapproved);
+      }
+      const fallback = toCanonical(DEFAULT_BODIES[input.event]);
+
       const result = await createTwilioProvider(whatsappEnv.twilio).send({
         to: number.digits,
-        template: template ?? {
-          contentSid: null,
-          manualText: DEFAULT_MANUAL_TEXTS[input.event],
+        template: {
+          contentSid: sandbox ? null : (template?.activeContentSid ?? null),
+          contentVariables: sandbox
+            ? null
+            : ((template?.activeVariables as MessageChip[] | null) ?? null),
+          body: template?.body ?? fallback.body,
+          variables: (template?.variables as MessageChip[] | undefined) ?? fallback.variables,
         },
         params: {
           ...SAMPLE_PARAMS,

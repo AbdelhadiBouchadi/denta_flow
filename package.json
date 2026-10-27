@@ -15,7 +15,9 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/database/seed.ts",
     "bootstrap:admin": "tsx scripts/bootstrap-admin.ts",
-    "check:filters": "tsx scripts/check-filter-parity.ts"
+    "check:filters": "tsx scripts/check-filter-parity.ts",
+    "dev:cron": "tsx scripts/dev-cron.ts",
+    "secrets:generate": "tsx scripts/generate-secret.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

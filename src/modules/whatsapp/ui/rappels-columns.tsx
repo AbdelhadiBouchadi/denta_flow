@@ -17,7 +17,13 @@ const sentCell = (row: WhatsappDayRow) => {
   return <span className="tabular-nums">{formatTime(row.sentAt)}</span>;
 };
 
-export const columns: ColumnDef<DataTableFeatures, WhatsappDayRow>[] = [
+/**
+ * The day's table. `actions` follows the mode: a to-do list in manual mode,
+ * a monitoring list otherwise (prompts/33b, decision 1).
+ */
+export const getColumns = (
+  actions: "work" | "rescue",
+): ColumnDef<DataTableFeatures, WhatsappDayRow>[] => [
   {
     id: "time",
     header: COPY.colTime,
@@ -78,7 +84,6 @@ export const columns: ColumnDef<DataTableFeatures, WhatsappDayRow>[] = [
         skipReason={row.original.skipReason}
         unscheduledReason={row.original.unscheduledReason}
         errorCode={row.original.errorCode}
-        errorMessage={row.original.errorMessage}
       />
     ),
   },
@@ -91,7 +96,7 @@ export const columns: ColumnDef<DataTableFeatures, WhatsappDayRow>[] = [
   {
     id: "actions",
     header: () => <span className="sr-only">{COPY.colActions}</span>,
-    cell: ({ row }) => <RappelActions row={row.original} />,
+    cell: ({ row }) => <RappelActions row={row.original} variant={actions} />,
     meta: { className: "text-right" },
   },
 ];

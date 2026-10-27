@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { addCalendarDays, clinicInstant } from "@/lib/time";
-import { DEFAULT_MANUAL_TEXTS } from "./constants";
+import { CHIP_VALUES, DEFAULT_BODIES } from "./constants";
+import { buildMessageParams, formatClinicPhone } from "./message";
 import {
-  buildMessageParams,
-  formatClinicPhone,
-  renderManualText,
-  toContentVariables,
-} from "./message";
+  chipValuesFrom,
+  contentVariablesFor,
+  renderCanonical,
+  toCanonical,
+} from "./template-body";
 import { WhatsappEvent } from "./types";
 
 const params = (startsAt: Date) =>
@@ -50,9 +51,14 @@ describe("buildMessageParams", () => {
   });
 });
 
-describe("toContentVariables", () => {
-  it("is the JSON string Twilio expects, keys 1 to 5", () => {
-    const json = toContentVariables(params(clinicInstant("2026-10-14", "14:30")));
+describe("contentVariablesFor", () => {
+  it("is the JSON string Twilio expects, keys 1 to 5, for 33's five-value order", () => {
+    const json = JSON.stringify(
+      contentVariablesFor(
+        [...CHIP_VALUES],
+        chipValuesFrom(params(clinicInstant("2026-10-14", "14:30"))),
+      ),
+    );
     expect(JSON.parse(json)).toEqual({
       "1": "Karim",
       "2": "mercredi 14 octobre",
@@ -64,16 +70,16 @@ describe("toContentVariables", () => {
   });
 });
 
-describe("renderManualText", () => {
-  it("replaces every token", () => {
-    const text = renderManualText(
-      DEFAULT_MANUAL_TEXTS[WhatsappEvent.Reminder],
-      params(clinicInstant("2026-10-14", "14:30")),
+describe("renderCanonical", () => {
+  it("replaces every placeholder of the default reminder", () => {
+    const text = renderCanonical(
+      toCanonical(DEFAULT_BODIES[WhatsappEvent.Reminder]),
+      chipValuesFrom(params(clinicInstant("2026-10-14", "14:30"))),
     );
     expect(text).toBe(
       "Bonjour Karim, nous vous rappelons votre rendez-vous le mercredi 14 octobre à 14:30 au Cabinet Dentaire Dr Amrani. Pour le modifier ou l’annuler, appelez le 05 28 84 32 17.",
     );
-    expect(text).not.toMatch(/\{\w+\}/);
+    expect(text).not.toMatch(/[{}]/);
   });
 });
 

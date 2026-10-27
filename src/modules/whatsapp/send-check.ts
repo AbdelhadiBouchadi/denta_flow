@@ -1,3 +1,4 @@
+import { isTemplateSendable } from "./approval";
 import {
   ACTIVE_APPOINTMENT_STATUSES,
   CANCELED_APPOINTMENT_STATUS,
@@ -5,7 +6,13 @@ import {
 import { buildMessageParams, type MessageParams } from "./message";
 import { toWhatsAppNumber } from "./phone";
 import { decideAtSendTime, type SendWindow } from "./schedule";
-import { WhatsappConsent, WhatsappEvent, WhatsappSkipReason } from "./types";
+import type { SendTemplate } from "./server/provider/types";
+import {
+  WhatsappConsent,
+  WhatsappEvent,
+  WhatsappSkipReason,
+  type MessageChip,
+} from "./types";
 
 /**
  * The send-time check — THE authority (prompts/33, decision 6). Whatever the
@@ -21,7 +28,15 @@ export interface ClaimedRow {
   clinic: { name: string; phone: string | null };
   /** `null` when the rule was deleted. */
   rule: { enabled: boolean } | null;
-  template: { contentSid: string | null; manualText: string; isActive: boolean } | null;
+  template: {
+    activeContentSid: string | null;
+    activeVariables: MessageChip[] | null;
+    body: string;
+    variables: MessageChip[];
+    isActive: boolean;
+  } | null;
+  /** Twilio's shared sandbox: the text goes as is, no approval needed. */
+  sandbox: boolean;
   window: SendWindow;
   now: Date;
 }
@@ -31,9 +46,11 @@ export type SendCheck =
       action: "send";
       to: string;
       params: MessageParams;
-      template: { contentSid: string | null; manualText: string };
+      template: SendTemplate;
     }
   | { action: "cancel"; reason: WhatsappSkipReason }
+  /** A person must act (prompts/33b): the row becomes `needs_attention`. */
+  | { action: "attention"; reason: WhatsappSkipReason }
   | { action: "skip"; reason: WhatsappSkipReason }
   | { action: "reschedule"; at: Date };
 
@@ -66,6 +83,12 @@ export const checkClaimedRow = (row: ClaimedRow): SendCheck => {
 
   const mismatch = appointmentMismatch(row);
   if (mismatch) return { action: "cancel", reason: mismatch };
+
+  // Automatic mode sends only an approved resource — never fails at Twilio
+  // for an unapproved one. Approval later, then «Réessayer», sends it.
+  if (!isTemplateSendable(row.template, row.sandbox)) {
+    return { action: "attention", reason: WhatsappSkipReason.TemplateUnapproved };
+  }
 
   if (row.patient.consent !== WhatsappConsent.Granted) {
     return { action: "skip", reason: WhatsappSkipReason.NoConsent };
@@ -101,8 +124,10 @@ export const checkClaimedRow = (row: ClaimedRow): SendCheck => {
     action: "send",
     to: number.digits,
     template: {
-      contentSid: row.template.contentSid,
-      manualText: row.template.manualText,
+      contentSid: row.sandbox ? null : row.template.activeContentSid,
+      contentVariables: row.sandbox ? null : row.template.activeVariables,
+      body: row.template.body,
+      variables: row.template.variables,
     },
     params: buildMessageParams({
       firstName: row.patient.firstName,

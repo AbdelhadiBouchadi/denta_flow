@@ -32,9 +32,15 @@ export const useOpenManual = () => {
 
 interface RappelActionsProps {
   row: Pick<WhatsappDayRow, "messageId" | "waLink" | "canRetry">;
+  /**
+   * `work` — manual mode, the page is a to-do list: «Envoyer sur WhatsApp».
+   * `rescue` — automatic or test mode: a small «Envoyer manuellement» on the
+   * rows the server still offers (failed, to check, fixable skip).
+   */
+  variant?: "work" | "rescue";
 }
 
-export const RappelActions = ({ row }: RappelActionsProps) => {
+export const RappelActions = ({ row, variant = "work" }: RappelActionsProps) => {
   const trpc = useTRPC();
   const invalidate = useInvalidateWhatsapp();
   const openManual = useOpenManual();
@@ -64,10 +70,15 @@ export const RappelActions = ({ row }: RappelActionsProps) => {
           rel="noopener noreferrer"
           aria-disabled={openManual.isPending}
           onClick={() => openManual.mutate({ id: messageId })}
-          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          className={cn(
+            buttonVariants({
+              variant: variant === "work" ? "outline" : "ghost",
+              size: variant === "work" ? "sm" : "xs",
+            }),
+          )}
         >
           <SendIcon />
-          {COPY.sendOnWhatsapp}
+          {variant === "work" ? COPY.sendOnWhatsapp : COPY.sendManually}
         </a>
       )}
       {row.canRetry && (

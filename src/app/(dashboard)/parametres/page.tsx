@@ -152,7 +152,7 @@ const SettingsPage = async ({ searchParams }: Props) => {
   if (isAdmin) {
     void queryClient.prefetchQuery(trpc.whatsapp.getServiceStatus.queryOptions());
     void queryClient.prefetchQuery(trpc.whatsapp.getSettings.queryOptions());
-    void queryClient.prefetchQuery(trpc.whatsapp.listTemplates.queryOptions());
+    void queryClient.prefetchQuery(trpc.whatsapp.getTemplates.queryOptions());
     void queryClient.prefetchQuery(trpc.whatsapp.listRules.queryOptions());
     void queryClient.prefetchQuery(
       trpc.whatsapp.getJournal.queryOptions(journalQueryInput(whatsappFilters)),

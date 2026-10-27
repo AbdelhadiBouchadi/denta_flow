@@ -2,23 +2,24 @@ import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
 import { toClinicTime } from "@/lib/time";
-import { MESSAGE_VARIABLES } from "./constants";
+import { CHIP_SAMPLES } from "./constants";
+import { MessageChip } from "./types";
 
 /**
- * The five positional variables every template uses (prompts/33,
- * decision 1) — and NOTHING else: no surname, no treatment, no practitioner,
+ * The five values a message may carry (prompts/33, decision 1; the
+ * editor's chips since 33b) — and NOTHING else: no surname, no treatment, no practitioner,
  * no amount. Date and time are read on the clinic's wall clock.
  */
 export interface MessageParams {
-  /** {{1}} — the patient's first name only. */
+  /** «Prénom» — the patient's first name only. */
   firstName: string;
-  /** {{2}} — «mercredi 15 octobre». */
+  /** «Date» — «mercredi 15 octobre». */
   date: string;
-  /** {{3}} — «14:30». */
+  /** «Heure» — «14:30». */
   time: string;
-  /** {{4}} — the clinic's name. */
+  /** «Cabinet» — the clinic's name. */
   clinicName: string;
-  /** {{5}} — the clinic's phone, as a patient would dial it. */
+  /** «Téléphone» — the clinic's phone, as a patient would dial it. */
   clinicPhone: string;
 }
 
@@ -56,36 +57,11 @@ export const buildMessageParams = ({
   };
 };
 
-const ordered = (params: MessageParams) => [
-  params.firstName,
-  params.date,
-  params.time,
-  params.clinicName,
-  params.clinicPhone,
-];
-
-/** Twilio's `ContentVariables`: a JSON string `{"1":"…","2":"…",…}`. */
-export const toContentVariables = (params: MessageParams) =>
-  JSON.stringify(
-    Object.fromEntries(
-      ordered(params).map((value, index) => [String(index + 1), value]),
-    ),
-  );
-
-/** A manual text with `{prenom}`… replaced — manual mode and the sandbox. */
-export const renderManualText = (text: string, params: MessageParams) => {
-  const values = ordered(params);
-  return MESSAGE_VARIABLES.reduce(
-    (result, variable, index) => result.split(variable.token).join(values[index]),
-    text,
-  );
-};
-
-/** The sample values the templates tab previews with. */
+/** The sample values the editor previews with. */
 export const SAMPLE_PARAMS: MessageParams = {
-  firstName: MESSAGE_VARIABLES[0].sample,
-  date: MESSAGE_VARIABLES[1].sample,
-  time: MESSAGE_VARIABLES[2].sample,
-  clinicName: MESSAGE_VARIABLES[3].sample,
-  clinicPhone: MESSAGE_VARIABLES[4].sample,
+  firstName: CHIP_SAMPLES[MessageChip.FirstName],
+  date: CHIP_SAMPLES[MessageChip.Date],
+  time: CHIP_SAMPLES[MessageChip.Time],
+  clinicName: CHIP_SAMPLES[MessageChip.ClinicName],
+  clinicPhone: CHIP_SAMPLES[MessageChip.ClinicPhone],
 };

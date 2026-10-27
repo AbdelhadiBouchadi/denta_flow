@@ -3,15 +3,18 @@ import { z } from "zod";
 import { DEFAULT_PAGE } from "@/constants";
 import { isCalendarDate, wallClockToMinutes, WALL_CLOCK_PATTERN } from "@/lib/time";
 import {
+  CHIP_VALUES,
   CONSENT_VALUES,
-  CONTENT_SID_PATTERN,
   EVENT_VALUES,
+  MIN_LEAD_HOURS_MAX,
   STATUS_VALUES,
+  TEMPLATE_BODY_MAX,
   TIMING_UNITS,
   WHATSAPP_VALIDATION as V,
 } from "./constants";
 import { toWhatsAppNumber } from "./phone";
 import { isOffsetValid } from "./rules";
+import { bodyErrors } from "./template-body";
 import { WhatsappEvent } from "./types";
 
 /**
@@ -51,39 +54,87 @@ export const settingsUpdateSchema = z
 
 export type SettingsUpdateValues = z.infer<typeof settingsUpdateSchema>;
 
-// ── Templates ───────────────────────────────────────────────────────────────
+/**
+ * «Heures d'envoi» as the admin fills it (prompts/33b, decision 4): 24-hour
+ * times and the minimum lead in whole HOURS. UI only — the procedure keeps
+ * `settingsUpdateSchema` and minutes; `hoursToSettings` converts, once.
+ */
+export const hoursFormSchema = z
+  .object({
+    windowStart: wallClock,
+    windowEnd: wallClock,
+    minLeadHours: z
+      .number({ message: V.minLeadHours })
+      .int({ message: V.minLeadHours })
+      .min(0, { message: V.minLeadHours })
+      .max(MIN_LEAD_HOURS_MAX, { message: V.minLeadHours }),
+  })
+  .refine(
+    (value) =>
+      !WALL_CLOCK_PATTERN.test(value.windowStart) ||
+      !WALL_CLOCK_PATTERN.test(value.windowEnd) ||
+      wallClockToMinutes(value.windowStart) < wallClockToMinutes(value.windowEnd),
+    { message: V.windowOrder, path: ["windowEnd"] },
+  );
 
-export const templateFormSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, { message: V.nameRequired })
-    .max(80, { message: V.nameTooLong }),
-  kind: z.enum(EVENT_VALUES, { message: V.event }),
-  // "" — an untouched field — is «not configured».
-  contentSid: z
-    .string()
-    .nullable()
-    .transform((value) => (value?.trim() ? value.trim() : null))
-    .refine((value) => value === null || CONTENT_SID_PATTERN.test(value), {
-      message: V.contentSid,
-    }),
-  language: z
-    .string()
-    .trim()
-    .regex(/^[a-z]{2}(_[A-Z]{2})?$/, { message: V.language }),
-  manualText: z
-    .string()
-    .trim()
-    .min(1, { message: V.manualTextRequired })
-    .max(1000, { message: V.manualTextTooLong }),
-  isActive: z.boolean(),
+export type HoursFormValues = z.infer<typeof hoursFormSchema>;
+
+export const hoursToSettings = (
+  values: HoursFormValues,
+  enabled: boolean,
+): SettingsUpdateValues => ({
+  enabled,
+  windowStart: values.windowStart,
+  windowEnd: values.windowEnd,
+  minLeadMinutes: values.minLeadHours * 60,
 });
 
-export const templateUpdateSchema = templateFormSchema.extend({ id });
+/** Stored minutes → the hours field; a legacy odd value rounds up. */
+export const settingsToHours = (settings: SettingsUpdateValues): HoursFormValues => ({
+  windowStart: settings.windowStart,
+  windowEnd: settings.windowEnd,
+  minLeadHours: Math.min(MIN_LEAD_HOURS_MAX, Math.ceil(settings.minLeadMinutes / 60)),
+});
+
+// ── Templates ───────────────────────────────────────────────────────────────
+
+/**
+ * The editor's message: text and chips. A string with placeholders never
+ * crosses the wire — the server builds the canonical body (template-body.ts).
+ */
+export const bodySegmentSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string().max(TEMPLATE_BODY_MAX) }),
+  z.object({ type: z.literal("chip"), chip: z.enum(CHIP_VALUES) }),
+]);
+
+export const templateFormSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, { message: V.nameRequired })
+      .max(80, { message: V.nameTooLong }),
+    kind: z.enum(EVENT_VALUES, { message: V.event }),
+    segments: z.array(bodySegmentSchema).max(200, { message: V.bodyTooLong }),
+    isActive: z.boolean(),
+  })
+  .superRefine((value, context) => {
+    for (const message of bodyErrors(value.segments, value.kind)) {
+      context.addIssue({ code: "custom", path: ["segments"], message });
+    }
+  });
+
+/** `submit`: «Enregistrer et envoyer pour validation» rather than «Enregistrer». */
+export const templateCreateSchema = templateFormSchema.safeExtend({ submit: z.boolean() });
+export const templateUpdateSchema = templateFormSchema.safeExtend({
+  id,
+  submit: z.boolean(),
+});
 
 export type TemplateFormValues = z.input<typeof templateFormSchema>;
 export type TemplateValues = z.output<typeof templateFormSchema>;
+
+export const templateIdSchema = z.object({ id });
 
 // ── Rules ───────────────────────────────────────────────────────────────────
 

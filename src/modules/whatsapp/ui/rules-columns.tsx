@@ -2,7 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { EllipsisIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { EllipsisIcon, PencilIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import type { DataTableFeatures } from "@/components/shared/data-table";
@@ -103,7 +103,7 @@ const RuleActionsCell = ({
             }}
           >
             <Trash2Icon />
-            {COPY.deleteTemplate}
+            {COPY.deleteRule}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -111,15 +111,29 @@ const RuleActionsCell = ({
   );
 };
 
-/** Modèle associé · Événement déclencheur · Programmation · Statut · actions. */
+/**
+ * Modèle associé · Événement déclencheur · Programmation · Statut · actions.
+ * `approvalRequired` (a real sender is connected): a rule whose template has
+ * no approved version says its sends are suspended (prompts/33b) — the cron
+ * holds those rows as «À vérifier». Never in test or manual mode.
+ */
 export const getColumns = (
   onEdit: (rule: WhatsappRuleItem) => void,
+  approvalRequired: boolean,
 ): ColumnDef<DataTableFeatures, WhatsappRuleItem>[] => [
   {
     id: "template",
     header: COPY.colTemplate,
     cell: ({ row }) => (
-      <span className="text-foreground font-medium">{row.original.template.name}</span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="text-foreground font-medium">{row.original.template.name}</span>
+        {approvalRequired && !row.original.template.hasApprovedVersion && (
+          <span className="text-warning-strong flex items-start gap-1.5 text-xs whitespace-normal">
+            <TriangleAlertIcon aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            {COPY.ruleTemplateUnapproved}
+          </span>
+        )}
+      </div>
     ),
   },
   {

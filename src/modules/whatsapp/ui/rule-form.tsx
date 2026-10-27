@@ -51,7 +51,7 @@ const UNIT_ITEMS = TIMING_UNITS.map((unit) => ({ value: unit.value, label: unit.
 export const RuleForm = ({ initialValues, onSuccess, onCancel }: RuleFormProps) => {
   const trpc = useTRPC();
   const invalidate = useInvalidateWhatsapp();
-  const { data: templates } = useSuspenseQuery(trpc.whatsapp.listTemplates.queryOptions());
+  const { data: templates } = useSuspenseQuery(trpc.whatsapp.getTemplates.queryOptions());
   const { data: rules } = useSuspenseQuery(trpc.whatsapp.listRules.queryOptions());
   const isEdit = !!initialValues;
 

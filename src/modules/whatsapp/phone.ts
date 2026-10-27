@@ -70,3 +70,19 @@ export const maskPhone = (raw: string): string => {
 /** `https://wa.me/<digits>?text=<encoded>` — the manual fallback. */
 export const waMeLink = (digits: string, text: string) =>
   `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+
+/**
+ * The clinic's sender as a person reads it, from `whatsapp:+…`:
+ * «+212 6 12 34 56 78», «+1 415 523 8886», otherwise «+CC NNN NNN…».
+ * The sender number is not a secret — patients see it on every message.
+ */
+export const formatSenderNumber = (from: string | null | undefined): string | null => {
+  const digits = from?.replace(/^whatsapp:/, "").replace(/\D/g, "") ?? "";
+  if (digits.length < 8) return null;
+  const morocco = /^212(\d)(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(digits);
+  if (morocco) return `+212 ${morocco.slice(1).join(" ")}`;
+  const nanp = /^1(\d{3})(\d{3})(\d{4})$/.exec(digits);
+  if (nanp) return `+1 ${nanp.slice(1).join(" ")}`;
+  const rest = digits.slice(3).replace(/(\d{3})(?=\d)/g, "$1 ");
+  return `+${digits.slice(0, 3)} ${rest}`;
+};
