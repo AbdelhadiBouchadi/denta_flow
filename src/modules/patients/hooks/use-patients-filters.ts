@@ -1,8 +1,14 @@
 "use client";
 
-import { parseAsInteger, parseAsString, useQueryStates } from "nuqs";
+import {
+  parseAsInteger,
+  parseAsString,
+  parseAsStringLiteral,
+  useQueryStates,
+} from "nuqs";
 
 import { DEFAULT_PAGE } from "@/constants";
+import { CONSENT_VALUES } from "@/modules/whatsapp/constants";
 
 /**
  * CLIENT half of the patients list URL state — it MIRRORS params.ts exactly.
@@ -17,6 +23,9 @@ export const usePatientsFilters = () =>
     insurerId: parseAsString
       .withDefault("")
       .withOptions({ clearOnDefault: true }),
+    consent: parseAsStringLiteral(CONSENT_VALUES).withOptions({
+      clearOnDefault: true,
+    }),
     page: parseAsInteger
       .withDefault(DEFAULT_PAGE)
       .withOptions({ clearOnDefault: true }),

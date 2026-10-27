@@ -21,6 +21,7 @@ export const ACTIVITY_ENTITY_TONES: Record<ActivityEntityType, StatusTone> = {
   [ActivityEntityType.PrescriptionPack]: "neutral",
   [ActivityEntityType.CertificateTemplate]: "neutral",
   [ActivityEntityType.PatientFile]: "info",
+  [ActivityEntityType.Whatsapp]: "success",
 };
 
 /** Screen-reader name of each icon. */
@@ -34,6 +35,7 @@ export const ACTIVITY_ENTITY_LABELS: Record<ActivityEntityType, string> = {
   [ActivityEntityType.PrescriptionPack]: "Pack d’ordonnance",
   [ActivityEntityType.CertificateTemplate]: "Modèle de certificat",
   [ActivityEntityType.PatientFile]: "Image",
+  [ActivityEntityType.Whatsapp]: "WhatsApp",
 };
 
 export const ACTIVITY_COPY = {

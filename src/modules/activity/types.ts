@@ -32,6 +32,8 @@ export enum ActivityEntityType {
   CertificateTemplate = "certificate_template",
   /** A radiograph or photo of the dossier's «Imagerie» tab (branch 31). */
   PatientFile = "patient_file",
+  /** WhatsApp settings, rules, templates, manual sends and retries (branch 33). */
+  Whatsapp = "whatsapp",
 }
 
 /** What happened to it. Stored as text in `activity_log.action`. */

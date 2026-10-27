@@ -11,6 +11,7 @@ import {
   ClipboardListIcon,
   ClockIcon,
   FileBadgeIcon,
+  MessageCircleIcon,
   PillIcon,
   ShieldCheckIcon,
   TagsIcon,
@@ -76,6 +77,14 @@ import TagsView, {
   TagsViewError,
   TagsViewLoading,
 } from "@/modules/tags/ui/views/tags-view";
+import { ADMIN_ROLE } from "@/modules/dashboard/constants";
+import { WHATSAPP_COPY } from "@/modules/whatsapp/constants";
+import { loadSearchParams as loadWhatsappSearchParams } from "@/modules/whatsapp/params";
+import { journalQueryInput } from "@/modules/whatsapp/query-inputs";
+import WhatsappSettingsView, {
+  WhatsappSettingsViewError,
+  WhatsappSettingsViewLoading,
+} from "@/modules/whatsapp/ui/views/whatsapp-settings-view";
 import { getQueryClient, trpc } from "@/trpc/server";
 
 export const metadata: Metadata = {
@@ -97,9 +106,13 @@ const SettingsPage = async ({ searchParams }: Props) => {
   const servicesFilters = await loadServicesSearchParams(searchParams);
   const schedulesFilters = await loadSchedulesSearchParams(searchParams);
   const prescriptionsFilters = await loadPrescriptionsSearchParams(searchParams);
+  const whatsappFilters = await loadWhatsappSearchParams(searchParams);
 
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) redirect("/connexion");
+  // «WhatsApp» is admin-only end to end: no section, no prefetch otherwise —
+  // an admin procedure prefetched for a secretary would dehydrate FORBIDDEN.
+  const isAdmin = session.user.role === ADMIN_ROLE;
 
   const queryClient = getQueryClient();
   void queryClient.prefetchQuery(trpc.clinic.get.queryOptions());
@@ -135,6 +148,16 @@ const SettingsPage = async ({ searchParams }: Props) => {
   void queryClient.prefetchQuery(
     trpc.certificateTemplates.getMany.queryOptions(),
   );
+  // Paramètres › WhatsApp (prompts/33): every tab's query, same inputs as the view.
+  if (isAdmin) {
+    void queryClient.prefetchQuery(trpc.whatsapp.getServiceStatus.queryOptions());
+    void queryClient.prefetchQuery(trpc.whatsapp.getSettings.queryOptions());
+    void queryClient.prefetchQuery(trpc.whatsapp.listTemplates.queryOptions());
+    void queryClient.prefetchQuery(trpc.whatsapp.listRules.queryOptions());
+    void queryClient.prefetchQuery(
+      trpc.whatsapp.getJournal.queryOptions(journalQueryInput(whatsappFilters)),
+    );
+  }
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
@@ -272,6 +295,22 @@ const SettingsPage = async ({ searchParams }: Props) => {
               </>
             ),
           },
+          ...(isAdmin
+            ? [
+                {
+                  id: "whatsapp",
+                  label: WHATSAPP_COPY.sectionTitle,
+                  icon: <MessageCircleIcon />,
+                  content: (
+                    <Suspense fallback={<WhatsappSettingsViewLoading />}>
+                      <ErrorBoundary FallbackComponent={WhatsappSettingsViewError}>
+                        <WhatsappSettingsView />
+                      </ErrorBoundary>
+                    </Suspense>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
     </HydrationBoundary>

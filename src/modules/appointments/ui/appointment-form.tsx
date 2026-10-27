@@ -40,6 +40,7 @@ import { getErrorMessage } from "@/lib/errors";
 import { formatCalendarDate } from "@/lib/format";
 import { clinicNow } from "@/lib/time";
 import { formatPatientName } from "@/modules/patients/derived";
+import { AppointmentMessageBadge } from "@/modules/whatsapp/ui/appointment-message-badge";
 import { useTRPC } from "@/trpc/client";
 import {
   APPOINTMENT_COPY,
@@ -315,6 +316,9 @@ export const AppointmentForm = ({
           view. Capped at 70vh in a dialog or drawer; the agenda's sheet is
           already full height and bounds it itself. */}
       <div className="flex max-h-[70vh] min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 in-data-[slot=sheet-content]:max-h-none">
+        {/* The latest WhatsApp message about this booking (prompts/33) —
+            in the dialog and the agenda's sheet alike, both render this form. */}
+        {isEdit && <AppointmentMessageBadge appointmentId={initialValues.id} />}
         <FieldGroup className="gap-4">
           <Controller
             control={form.control}

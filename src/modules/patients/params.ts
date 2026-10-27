@@ -1,6 +1,12 @@
-import { createLoader, parseAsInteger, parseAsString } from "nuqs/server";
+import {
+  createLoader,
+  parseAsInteger,
+  parseAsString,
+  parseAsStringLiteral,
+} from "nuqs/server";
 
 import { DEFAULT_PAGE } from "@/constants";
+import { CONSENT_VALUES } from "@/modules/whatsapp/constants";
 
 /**
  * SERVER half of the patients list URL state. `hooks/use-patients-filters.ts`
@@ -16,6 +22,10 @@ export const filterSearchParams = {
   search: parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
   tagId: parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
   insurerId: parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  // «Rappels WhatsApp» consent (prompts/33). null ⇒ every patient.
+  consent: parseAsStringLiteral(CONSENT_VALUES).withOptions({
+    clearOnDefault: true,
+  }),
   page: parseAsInteger
     .withDefault(DEFAULT_PAGE)
     .withOptions({ clearOnDefault: true }),

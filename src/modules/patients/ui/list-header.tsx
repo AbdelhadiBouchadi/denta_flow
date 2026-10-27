@@ -19,6 +19,10 @@ import {
 } from "@/components/ui/select";
 import { DEFAULT_PAGE } from "@/constants";
 import { insurerOptionLabel } from "@/modules/insurers/options";
+import {
+  CONSENT_FIELD_COPY,
+  CONSENT_OPTIONS,
+} from "@/modules/whatsapp/constants";
 import { useTRPC } from "@/trpc/client";
 import { usePatientsFilters } from "../hooks/use-patients-filters";
 import NewPatientDialog from "./new-patient-dialog";
@@ -67,7 +71,7 @@ const PatientsListHeader = () => {
   const { data: insurers } = useQuery(trpc.insurers.getMany.queryOptions());
 
   const hasFilters = Boolean(
-    filters.search || filters.tagId || filters.insurerId,
+    filters.search || filters.tagId || filters.insurerId || filters.consent,
   );
 
   // Any filter that narrows the results sends the user back to page 1 —
@@ -152,13 +156,38 @@ const PatientsListHeader = () => {
           </SelectContent>
         </Select>
 
+        <Select
+          value={filters.consent}
+          onValueChange={(value) => narrow({ consent: value ?? null })}
+          items={[
+            { label: CONSENT_FIELD_COPY.allLabel, value: null },
+            ...CONSENT_OPTIONS,
+          ]}
+        >
+          <SelectTrigger
+            size="default"
+            className="h-9 min-w-48"
+            aria-label={CONSENT_FIELD_COPY.filterLabel}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={null}>{CONSENT_FIELD_COPY.allLabel}</SelectItem>
+            {CONSENT_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         {hasFilters && (
           <Button
             variant="ghost"
             size="lg"
             onClick={() => {
               setSearchInput("");
-              narrow({ search: "", tagId: "", insurerId: "" });
+              narrow({ search: "", tagId: "", insurerId: "", consent: null });
             }}
           >
             <XIcon />

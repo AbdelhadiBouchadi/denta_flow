@@ -22,6 +22,7 @@ import { statisticsRouter } from "@/modules/statistics/server/procedures";
 import { tagsRouter } from "@/modules/tags/server/procedures";
 import { tasksRouter } from "@/modules/tasks/server/procedures";
 import { treatmentsRouter } from "@/modules/treatments/server/procedures";
+import { whatsappRouter } from "@/modules/whatsapp/server/procedures";
 
 import { createTRPCRouter } from "../init";
 
@@ -56,6 +57,7 @@ export const appRouter = createTRPCRouter({
   certificateTemplates: certificateTemplatesRouter,
   statistics: statisticsRouter,
   imaging: imagingRouter,
+  whatsapp: whatsappRouter,
 });
 
 export type AppRouter = typeof appRouter;

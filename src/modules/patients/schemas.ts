@@ -2,6 +2,8 @@ import { format } from "date-fns";
 import { z } from "zod";
 
 import { clinicNow } from "@/lib/time";
+import { CONSENT_VALUES } from "@/modules/whatsapp/constants";
+import { WhatsappConsent } from "@/modules/whatsapp/types";
 import { BloodType, MedicalCondition, SmokingStatus } from "./types";
 
 /**
@@ -111,6 +113,10 @@ export const patientInsertSchema = z.object({
   allergies: optionalText(500, "Le texte des allergies est trop long"),
   medicalNotes: optionalText(2000, "Les notes médicales sont trop longues"),
   tagIds: z.array(z.string()).default([]),
+  // «Rappels WhatsApp» — only `granted` receives automatic messages (prompts/33).
+  whatsappConsent: z
+    .enum(CONSENT_VALUES, { message: "Consentement invalide" })
+    .default(WhatsappConsent.Unknown),
 });
 
 /** Update = insert + id. The fields are never redeclared (05-slice.md §1). */

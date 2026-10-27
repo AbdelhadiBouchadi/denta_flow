@@ -29,6 +29,7 @@ import { GreetingBanner } from "../greeting-banner";
 import { StatCard } from "../stat-card";
 import { TodayAgenda } from "../today-agenda";
 import { TopDebtors } from "../top-debtors";
+import { WhatsappAttentionCard } from "@/modules/whatsapp/ui/attention-card";
 
 interface DashboardViewProps {
   /**
@@ -55,6 +56,11 @@ const DashboardView = ({ isAdmin }: DashboardViewProps) => {
   return (
     <div className="flex flex-col gap-4 md:gap-6">
       <GreetingBanner stats={stats} />
+
+      {/* Hidden at 0 — and the server answers 0 in manual mode (prompts/33). */}
+      {stats.whatsappToCheckCount > 0 && (
+        <WhatsappAttentionCard count={stats.whatsappToCheckCount} />
+      )}
 
       <div className={kpiGridClass(isAdmin)}>
         <StatCard

@@ -1,7 +1,7 @@
 // src/database/schema.ts
 import {
   pgTable, text, timestamp, boolean, integer, date, time, jsonb, pgEnum,
-  index, uniqueIndex, primaryKey, check,
+  index, uniqueIndex, primaryKey, check, foreignKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -109,6 +109,20 @@ export const bloodType         = pgEnum("blood_type", [
 export const patientFileKind   = pgEnum("patient_file_kind", [
   "panoramic", "periapical", "cephalometric", "photo", "other",
 ]);
+// WhatsApp automation (prompts/33). English keys; French labels in the whatsapp slice.
+export const whatsappConsent   = pgEnum("whatsapp_consent", ["granted", "declined", "unknown"]);
+export const whatsappEvent     = pgEnum("whatsapp_event", [
+  "reminder", "confirmation", "reschedule", "cancellation",
+]);
+export const whatsappMessageStatus = pgEnum("whatsapp_message_status", [
+  "scheduled", "sending", "sent", "delivered", "read", "failed", "skipped",
+  "canceled", "needs_attention", "manual_opened",
+]);
+export const whatsappChannel   = pgEnum("whatsapp_channel", ["whatsapp_twilio", "manual_link"]);
+export const whatsappSkipReason = pgEnum("whatsapp_skip_reason", [
+  "no_consent", "invalid_phone", "landline", "too_late", "appointment_status",
+  "clinic_phone_missing", "superseded",
+]);
 
 // ── Clinic settings: exactly one row, id = "clinic" ──────────────────────────
 export const clinicSettings = pgTable("clinic_settings", {
@@ -169,6 +183,8 @@ export const patients = pgTable("patients", {
   allergies: text("allergies"),
   medicalNotes: text("medical_notes"),
   isArchived: boolean("is_archived").notNull().default(false),
+  // Only `granted` receives automatic WhatsApp messages (prompts/33, decision 4).
+  whatsappConsent: whatsappConsent("whatsapp_consent").notNull().default("unknown"),
   createdByStaffId: text("created_by_staff_id").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -537,4 +553,121 @@ export const activityLog = pgTable("activity_log", {
 }, (t) => [
   index("activity_log_created_at_idx").on(t.createdAt),
   index("activity_log_patient_created_at_idx").on(t.patientId, t.createdAt),
+]);
+
+// ── WhatsApp automation (prompts/33) ────────────────────────────────────────
+// Outbound appointment messages through Twilio. `whatsapp_messages` IS the
+// schedule: one row per (appointment, rule, occurrence), written in the same
+// `db.batch` as the appointment change that caused it, claimed by the cron,
+// and re-validated at send time (src/modules/whatsapp/server/).
+
+// Single row, id = "whatsapp" — the same pattern as `clinic_settings`.
+// `enabled` is the global switch; the Twilio credentials live in env, never here.
+export const whatsappSettings = pgTable("whatsapp_settings", {
+  id: text("id").primaryKey().default("whatsapp"),
+  enabled: boolean("enabled").notNull().default(false),
+  // Clinic wall-clock window outside which nothing is sent (prompts/33, decision 3).
+  windowStart: time("window_start").notNull().default("09:00:00"),
+  windowEnd: time("window_end").notNull().default("19:00:00"),
+  // Reminders only: a reminder that cannot go out this long before the
+  // appointment is skipped `too_late`.
+  minLeadMinutes: integer("min_lead_minutes").notNull().default(120),
+  // The cron's last run — the «État du service» tab reads it.
+  lastCronAt: timestamp("last_cron_at", { withTimezone: true }),
+  lastCronClaimed: integer("last_cron_claimed").notNull().default(0),
+  lastCronSent: integer("last_cron_sent").notNull().default(0),
+  lastCronFailed: integer("last_cron_failed").notNull().default(0),
+  lastCronNeedsAttention: integer("last_cron_needs_attention").notNull().default(0),
+  updatedByStaffId: text("updated_by_staff_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  check("whatsapp_settings_window_order", sql`${t.windowStart} < ${t.windowEnd}`),
+  check("whatsapp_settings_min_lead_range", sql`${t.minLeadMinutes} BETWEEN 0 AND 1440`),
+]);
+
+// A named message the admin manages («Modèle associé»). `contentSid` points at
+// the Twilio Content Template approved for WhatsApp — the app never creates
+// templates in Twilio. `manualText` is what manual mode and the sandbox send.
+export const whatsappTemplates = pgTable("whatsapp_templates", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  name: text("name").notNull().unique(),
+  kind: whatsappEvent("kind").notNull(),
+  contentSid: text("content_sid"),
+  language: text("language").notNull().default("fr"),
+  manualText: text("manual_text").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  // The target of the rules' composite foreign key below.
+  uniqueIndex("whatsapp_templates_id_kind_idx").on(t.id, t.kind),
+  check(
+    "whatsapp_templates_content_sid_format",
+    sql`${t.contentSid} IS NULL OR ${t.contentSid} ~ '^HX[0-9a-fA-F]{32}$'`,
+  ),
+]);
+
+// A rule = a template + a timing. Its event is its template's kind, held by
+// the composite foreign key (template_id, event) → templates (id, kind): a
+// rule can never disagree with its template, and a used template can neither
+// be deleted nor change kind (RESTRICT, answered in French by the slice).
+export const whatsappRules = pgTable("whatsapp_rules", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  templateId: text("template_id").notNull(),
+  event: whatsappEvent("event").notNull(),
+  // reminder: minutes BEFORE the appointment; others: delay AFTER the event.
+  offsetMinutes: integer("offset_minutes").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  foreignKey({
+    name: "whatsapp_rules_template_kind_fk",
+    columns: [t.templateId, t.event],
+    foreignColumns: [whatsappTemplates.id, whatsappTemplates.kind],
+  }).onDelete("restrict").onUpdate("restrict"),
+  uniqueIndex("whatsapp_rules_event_offset_idx").on(t.event, t.offsetMinutes),
+  // One rule per event, except reminders (at most 3, checked by the slice).
+  uniqueIndex("whatsapp_rules_single_event_idx").on(t.event).where(sql`${t.event} <> 'reminder'`),
+  check(
+    "whatsapp_rules_offset_range",
+    sql`(${t.event} = 'reminder' AND ${t.offsetMinutes} BETWEEN 60 AND 10080)
+      OR (${t.event} <> 'reminder' AND ${t.offsetMinutes} BETWEEN 0 AND 1440)`,
+  ),
+]);
+
+export const whatsappMessages = pgTable("whatsapp_messages", {
+  id: text("id").primaryKey().$defaultFn(() => nanoid()),
+  appointmentId: text("appointment_id").notNull().references(() => appointments.id, { onDelete: "cascade" }),
+  ruleId: text("rule_id").references(() => whatsappRules.id, { onDelete: "set null" }),
+  event: whatsappEvent("event").notNull(),
+  // reminder / reschedule: the ISO instant of `forStartsAt`; confirmation:
+  // "created"; cancellation: "canceled".
+  occurrenceKey: text("occurrence_key").notNull(),
+  // The appointment start the message was planned for — the send-time check
+  // compares it with the appointment's current start.
+  forStartsAt: timestamp("for_starts_at", { withTimezone: true }).notNull(),
+  scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+  status: whatsappMessageStatus("status").notNull().default("scheduled"),
+  skipReason: whatsappSkipReason("skip_reason"),
+  channel: whatsappChannel("channel"),
+  providerMessageId: text("provider_message_id").unique(),
+  attempts: integer("attempts").notNull().default(0),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  failedAt: timestamp("failed_at", { withTimezone: true }),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  openedAt: timestamp("opened_at", { withTimezone: true }),
+  openedByStaffId: text("opened_by_staff_id").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("whatsapp_messages_occurrence_idx").on(t.appointmentId, t.ruleId, t.occurrenceKey),
+  index("whatsapp_messages_status_scheduled_for_idx").on(t.status, t.scheduledFor),
+  index("whatsapp_messages_appointment_idx").on(t.appointmentId),
+  index("whatsapp_messages_sent_at_idx").on(t.sentAt),
 ]);
