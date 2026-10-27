@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
   Field,
+  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -46,6 +47,11 @@ import {
 } from "../schemas";
 import type { PatientGetOne } from "../types";
 import { PatientTags } from "./patient-tags";
+import {
+  CONSENT_OPTIONS,
+  CONSENT_FIELD_COPY,
+} from "@/modules/whatsapp/constants";
+import { WhatsappConsent } from "@/modules/whatsapp/types";
 
 /** The oldest birth date the picker offers. */
 const EARLIEST_BIRTH_YEAR = 1900;
@@ -75,6 +81,10 @@ const toFormValues = (patient?: PatientGetOne): PatientFormValues => ({
   allergies: patient?.allergies ?? "",
   medicalNotes: patient?.medicalNotes ?? "",
   tagIds: patient?.tags.map((tag) => tag.id) ?? [],
+  // The pgEnum and the TS enum are kept in lockstep (whatsapp/types.ts).
+  whatsappConsent:
+    (patient?.whatsappConsent as WhatsappConsent | undefined) ??
+    WhatsappConsent.Unknown,
 });
 
 export const PatientForm = ({
@@ -302,14 +312,50 @@ export const PatientForm = ({
             />
           </div>
 
-          <TextField
-            control={form.control}
-            name="email"
-            label="Adresse e-mail"
-            placeholder="ex. karim.benali@example.ma"
-            inputMode="email"
-            disabled={isPending}
-          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <TextField
+              control={form.control}
+              name="email"
+              label="Adresse e-mail"
+              placeholder="ex. karim.benali@example.ma"
+              inputMode="email"
+              disabled={isPending}
+            />
+            {/* Only «Accepté» receives automatic messages (prompts/33). */}
+            <Controller
+              control={form.control}
+              name="whatsappConsent"
+              render={({ field, fieldState }) => (
+                <Field data-invalid={fieldState.invalid}>
+                  <FieldLabel htmlFor={field.name}>
+                    {CONSENT_FIELD_COPY.label}
+                  </FieldLabel>
+                  <Select
+                    id={field.name}
+                    value={field.value ?? WhatsappConsent.Unknown}
+                    onValueChange={(value) => field.onChange(value)}
+                    disabled={isPending}
+                    items={CONSENT_OPTIONS}
+                  >
+                    <SelectTrigger size="default" className="h-9 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CONSENT_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>{CONSENT_FIELD_COPY.help}</FieldDescription>
+                  {fieldState.invalid && (
+                    <FieldError errors={[fieldState.error]} />
+                  )}
+                </Field>
+              )}
+            />
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <TextField

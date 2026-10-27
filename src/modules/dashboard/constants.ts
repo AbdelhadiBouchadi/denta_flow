@@ -8,6 +8,7 @@ import {
   FileTextIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
+  MessageCircleIcon,
   SettingsIcon,
   StethoscopeIcon,
   UsersIcon,
@@ -43,6 +44,8 @@ export const DASHBOARD_NAV_ITEMS: readonly DashboardNavItem[] = [
   { href: "/patients", label: "Patients", icon: UsersIcon },
   { href: "/calendrier", label: "Calendrier", icon: CalendarDaysIcon },
   { href: "/rendez-vous", label: "Rendez-vous", icon: CalendarClockIcon },
+  // WhatsApp messages of the day — every staff member (prompts/33).
+  { href: "/rappels", label: "Rappels", icon: MessageCircleIcon },
   { href: "/actes", label: "Actes", icon: StethoscopeIcon },
   { href: "/paiements", label: "Paiements", icon: CreditCardIcon },
   { href: "/documents", label: "Documents", icon: FileTextIcon },

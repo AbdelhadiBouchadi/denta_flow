@@ -40,6 +40,9 @@ export const useInvalidateAppointments = () => {
       queryClient.invalidateQueries(trpc.statistics.pathFilter()),
       // Every write here also writes an «Activité du jour» line.
       queryClient.invalidateQueries(trpc.activity.pathFilter()),
+      // A booking, a move or a cancellation plans or cancels WhatsApp
+      // messages in the same batch: «Rappels», the journal, the badge.
+      queryClient.invalidateQueries(trpc.whatsapp.pathFilter()),
     ]);
   }, [queryClient, trpc]);
 };

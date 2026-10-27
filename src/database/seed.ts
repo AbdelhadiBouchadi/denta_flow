@@ -94,7 +94,18 @@ import {
   tasks,
   treatments,
   user,
+  whatsappMessages,
+  whatsappRules,
+  whatsappSettings,
+  whatsappTemplates,
 } from "./schema";
+import {
+  DEFAULT_MANUAL_TEXTS,
+  DEFAULT_TEMPLATE_NAMES,
+  OCCURRENCE_CANCELED,
+} from "../modules/whatsapp/constants";
+import { computeSchedule } from "../modules/whatsapp/schedule";
+import { WhatsappEvent } from "../modules/whatsapp/types";
 
 // ── Deterministic randomness ────────────────────────────────────────────────
 // Same seed ⇒ same patients, same clinical history; only the dates slide with "today".
@@ -2625,6 +2636,15 @@ async function main() {
     });
   }
 
+  // WhatsApp (prompts/33) — consent, two bad numbers, templates, rules and
+  // the messages of today's remaining and tomorrow's appointments.
+  const whatsapp = buildWhatsappSeed({
+    patientRows,
+    appointmentRows,
+    tomorrowStart,
+    dayAfterStart: at(clinicDay(2), "00:00"),
+  });
+
   // ── Write — one atomic batch ──────────────────────────────────────────────
   const queries: [BatchItem<"pg">, ...BatchItem<"pg">[]] = [
     db
@@ -2648,7 +2668,8 @@ async function main() {
       ${appointments}, ${medicalHistories}, ${patientTags}, ${patients}, ${scheduleExceptions},
       ${practitionerSchedules}, ${appointmentTypes}, ${services}, ${tags}, ${insurers},
       ${expenses}, ${tasks}, ${clinicSettings},
-      ${prescriptionPackItems}, ${prescriptionPacks}, ${medications}, ${certificateTemplates}
+      ${prescriptionPackItems}, ${prescriptionPacks}, ${medications}, ${certificateTemplates},
+      ${whatsappMessages}, ${whatsappRules}, ${whatsappTemplates}, ${whatsappSettings}
       CASCADE`),
     db.insert(clinicSettings).values(clinic),
     db.insert(insurers).values(insurerRows),
@@ -2687,6 +2708,12 @@ async function main() {
     ...activityLines.map((line) => logActivity(line)),
     db.insert(expenses).values(expenseRows),
     db.insert(tasks).values(taskRows),
+    db.insert(whatsappSettings).values(whatsapp.settings),
+    db.insert(whatsappTemplates).values(whatsapp.templates),
+    db.insert(whatsappRules).values(whatsapp.rules),
+    ...(whatsapp.messages.length > 0
+      ? [db.insert(whatsappMessages).values(whatsapp.messages)]
+      : []),
   ];
   // History (prompts/30) — built and checked BEFORE anything is written.
   const history = buildHistory({
@@ -2697,6 +2724,10 @@ async function main() {
     insurerRows,
     existingAppointments: appointmentRows,
     usedNames,
+  });
+  // The history's patients get the same consent mix (prompts/33).
+  history.patientRows.forEach((p, index) => {
+    p.whatsappConsent = index % 9 === 4 ? "unknown" : "granted";
   });
   const allBilled = new Map(billed);
   for (const t of history.treatmentRows) {
@@ -2775,7 +2806,12 @@ async function main() {
       .length,
     expenses: expenseRows.length,
     tasks: taskRows.length,
+    whatsappTemplates: whatsapp.templates.length,
+    whatsappRules: whatsapp.rules.length,
+    whatsappMessages: whatsapp.messages.length,
   });
+  // Counts only — never a number or a name.
+  console.log("WhatsApp :", whatsapp.summary);
   console.log("Statuts des rendez-vous :", statusCounts);
   // History volumes and its invariants (prompts/30) — counts only.
   const historyStatus = history.appointmentRows.reduce<Record<string, number>>(
@@ -2840,6 +2876,309 @@ async function main() {
     antibioprophylaxie: flagged((h) => !!h.needsAntibioticProphylaxis),
     enceinte: flagged((h) => h.isPregnant === true),
   });
+}
+
+// ── WhatsApp (prompts/33) ───────────────────────────────────────────────────
+//
+// Manual mode (the switch off) with the four default templates and rules, a
+// realistic consent mix, one landline and one invalid number, and message
+// rows across every status for today's remaining and tomorrow's
+// appointments, so «Rappels» and the journal read like a real clinic day.
+// Deterministic — no randomness — and idempotent through the TRUNCATE.
+
+const WA_TEMPLATE_IDS = {
+  reminder: "seed-wa-template-reminder",
+  confirmation: "seed-wa-template-confirmation",
+  reschedule: "seed-wa-template-reschedule",
+  cancellation: "seed-wa-template-cancellation",
+} as const;
+
+const WA_RULE_IDS = {
+  reminder: "seed-wa-rule-reminder-24h",
+  confirmation: "seed-wa-rule-confirmation",
+  reschedule: "seed-wa-rule-reschedule",
+  cancellation: "seed-wa-rule-cancellation",
+} as const;
+
+const WA_WINDOW = { windowStart: "09:00", windowEnd: "19:00", minLeadMinutes: 120 };
+
+type NewWhatsappMessage = typeof whatsappMessages.$inferInsert;
+type WaStatus = NonNullable<NewWhatsappMessage["status"]>;
+type WaSkip = NonNullable<NewWhatsappMessage["skipReason"]>;
+
+/** The processed outcomes the seeded day shows, one patient each (decision 7). */
+const WA_OUTCOMES: {
+  status: WaStatus;
+  skip?: WaSkip;
+  errorCode?: string;
+  consent?: "unknown";
+  phone?: "landline" | "invalid";
+}[] = [
+  // Every distinct outcome first — «Délivré» is also the moved appointment's
+  // «Modification», so a short day still shows them all.
+  { status: "read" },
+  { status: "sent" },
+  { status: "failed", errorCode: "63016" },
+  { status: "needs_attention" },
+  { status: "manual_opened" },
+  { status: "skipped", skip: "no_consent", consent: "unknown" },
+  { status: "skipped", skip: "landline", phone: "landline" },
+  { status: "skipped", skip: "invalid_phone", phone: "invalid" },
+  { status: "skipped", skip: "too_late" },
+  { status: "skipped", skip: "clinic_phone_missing" },
+  { status: "delivered" },
+  { status: "delivered" },
+  { status: "read" },
+];
+
+const WA_HOUR = 3_600_000;
+const WA_SENT: readonly WaStatus[] = ["sent", "delivered", "read"];
+
+function buildWhatsappSeed({
+  patientRows,
+  appointmentRows,
+  tomorrowStart,
+  dayAfterStart,
+}: {
+  patientRows: NewPatient[];
+  appointmentRows: NewAppointment[];
+  tomorrowStart: Date;
+  dayAfterStart: Date;
+}) {
+  // Consent: most granted, one in ten unknown, one declined.
+  patientRows.forEach((p, index) => {
+    p.whatsappConsent = index % 10 === 7 ? "unknown" : "granted";
+  });
+  const declined = patientRows.find(
+    (p) => !p.isArchived && p.whatsappConsent === "granted",
+  );
+  if (declined) declined.whatsappConsent = "declined";
+
+  const kinds = [
+    WhatsappEvent.Reminder,
+    WhatsappEvent.Confirmation,
+    WhatsappEvent.Reschedule,
+    WhatsappEvent.Cancellation,
+  ] as const;
+  const templates: (typeof whatsappTemplates.$inferInsert)[] = kinds.map((kind) => ({
+    id: WA_TEMPLATE_IDS[kind],
+    name: DEFAULT_TEMPLATE_NAMES[kind],
+    kind,
+    // Not configured: the clinic creates and approves them on Twilio.
+    contentSid: null,
+    language: "fr",
+    manualText: DEFAULT_MANUAL_TEXTS[kind],
+  }));
+  const rules: (typeof whatsappRules.$inferInsert)[] = [
+    {
+      id: WA_RULE_IDS.reminder,
+      templateId: WA_TEMPLATE_IDS.reminder,
+      event: "reminder",
+      offsetMinutes: 24 * 60,
+      enabled: true,
+    },
+    {
+      id: WA_RULE_IDS.reschedule,
+      templateId: WA_TEMPLATE_IDS.reschedule,
+      event: "reschedule",
+      offsetMinutes: 0,
+      enabled: true,
+    },
+    {
+      id: WA_RULE_IDS.cancellation,
+      templateId: WA_TEMPLATE_IDS.cancellation,
+      event: "cancellation",
+      offsetMinutes: 0,
+      enabled: true,
+    },
+    {
+      id: WA_RULE_IDS.confirmation,
+      templateId: WA_TEMPLATE_IDS.confirmation,
+      event: "confirmation",
+      offsetMinutes: 0,
+      enabled: false,
+    },
+  ];
+
+  const patientById = new Map(patientRows.map((p) => [p.id, p]));
+  const inRange = appointmentRows
+    .filter((a) => a.startsAt > now && a.startsAt < dayAfterStart)
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+  const active = inRange.filter(
+    (a) => a.status === "planned" || a.status === "confirmed",
+  );
+
+  const messages: NewWhatsappMessage[] = [];
+  let sid = 0;
+  const seedSid = () => `seed-${String(++sid).padStart(4, "0")}`;
+
+  // Kept aside for the «Modification» story below: its reminder stays planned.
+  const moved = active.filter((a) => a.startsAt >= tomorrowStart).at(-1);
+
+  // Each outcome is taken by the first appointment it fits. An outcome that
+  // rewrites the patient (consent, phone) needs a patient of its own; the
+  // others need a patient nobody rewrote — so every row's reason is true of
+  // its patient.
+  const rewritten = new Set<string>();
+  const untouched = new Set<string>();
+  const fits = (patientId: string, next: (typeof WA_OUTCOMES)[number]) =>
+    next.consent || next.phone
+      ? !rewritten.has(patientId) && !untouched.has(patientId)
+      : !rewritten.has(patientId);
+  let outcome = 0;
+  for (const a of active) {
+    const patient = patientById.get(a.patientId);
+    const planned = computeSchedule({
+      event: WhatsappEvent.Reminder,
+      startsAt: a.startsAt,
+      now,
+      rule: { offsetMinutes: 24 * 60 },
+      settings: WA_WINDOW,
+    });
+    const base = {
+      appointmentId: a.id,
+      ruleId: WA_RULE_IDS.reminder,
+      event: "reminder" as const,
+      occurrenceKey: a.startsAt.toISOString(),
+      forStartsAt: a.startsAt,
+    };
+    const next = WA_OUTCOMES[outcome];
+    if (!next || !patient || a === moved || !fits(patient.id, next)) {
+      messages.push(
+        "skip" in planned
+          ? { ...base, scheduledFor: now, status: "skipped", skipReason: planned.skip }
+          : { ...base, scheduledFor: planned.scheduledFor, status: "scheduled" },
+      );
+      continue;
+    }
+    outcome++;
+    (next.consent || next.phone ? rewritten : untouched).add(patient.id);
+    if (next.consent) patient.whatsappConsent = next.consent;
+    if (next.phone === "landline") patient.phone = "+212528841290";
+    if (next.phone === "invalid") patient.phone = "+21261234";
+
+    // Processed at least an hour ago.
+    const at = new Date(
+      Math.min(
+        "scheduledFor" in planned ? planned.scheduledFor.getTime() : now.getTime(),
+        now.getTime() - WA_HOUR,
+      ),
+    );
+    const sent = WA_SENT.includes(next.status);
+    const viaTwilio = sent || next.status === "failed" || next.status === "needs_attention";
+    messages.push({
+      ...base,
+      scheduledFor: at,
+      status: next.status,
+      skipReason: next.skip ?? null,
+      channel: viaTwilio
+        ? "whatsapp_twilio"
+        : next.status === "manual_opened"
+          ? "manual_link"
+          : null,
+      providerMessageId: sent || next.status === "failed" ? seedSid() : null,
+      attempts: viaTwilio ? 1 : 0,
+      claimedAt: viaTwilio ? at : null,
+      sentAt: sent || next.status === "failed" ? at : null,
+      deliveredAt:
+        next.status === "delivered" || next.status === "read"
+          ? new Date(at.getTime() + 60_000)
+          : null,
+      readAt: next.status === "read" ? new Date(at.getTime() + 20 * 60_000) : null,
+      failedAt: next.status === "failed" ? new Date(at.getTime() + 30_000) : null,
+      errorCode:
+        next.errorCode ?? (next.status === "needs_attention" ? "timeout" : null),
+      errorMessage:
+        next.errorCode === "63016"
+          ? "Outside messaging window. For WhatsApp, use a Message Template instead."
+          : next.status === "needs_attention"
+            ? "No answer from Twilio before the timeout."
+            : null,
+      openedAt: next.status === "manual_opened" ? at : null,
+      openedByStaffId: next.status === "manual_opened" ? STAFF.secretary.id : null,
+    });
+  }
+
+  // The moved appointment: the old reminder superseded, the «Modification» delivered.
+  if (moved) {
+    const oldStart = new Date(moved.startsAt.getTime() + 2 * WA_HOUR);
+    const sentAt = new Date(now.getTime() - 3 * WA_HOUR);
+    messages.push(
+      {
+        appointmentId: moved.id,
+        ruleId: WA_RULE_IDS.reminder,
+        event: "reminder",
+        occurrenceKey: oldStart.toISOString(),
+        forStartsAt: oldStart,
+        scheduledFor: new Date(oldStart.getTime() - 24 * WA_HOUR),
+        status: "canceled",
+        skipReason: "superseded",
+      },
+      {
+        appointmentId: moved.id,
+        ruleId: WA_RULE_IDS.reschedule,
+        event: "reschedule",
+        occurrenceKey: moved.startsAt.toISOString(),
+        forStartsAt: moved.startsAt,
+        scheduledFor: sentAt,
+        status: "delivered",
+        channel: "whatsapp_twilio",
+        providerMessageId: seedSid(),
+        attempts: 1,
+        claimedAt: sentAt,
+        sentAt,
+        deliveredAt: new Date(sentAt.getTime() + 90_000),
+      },
+    );
+  }
+
+  // A canceled appointment: its reminder canceled, the «Annulation» read.
+  const canceled = inRange.find((a) => a.status === "canceled");
+  if (canceled) {
+    const patient = patientById.get(canceled.patientId);
+    if (patient && !rewritten.has(patient.id)) patient.whatsappConsent = "granted";
+    const sentAt = new Date(now.getTime() - 2 * WA_HOUR);
+    messages.push(
+      {
+        appointmentId: canceled.id,
+        ruleId: WA_RULE_IDS.reminder,
+        event: "reminder",
+        occurrenceKey: canceled.startsAt.toISOString(),
+        forStartsAt: canceled.startsAt,
+        scheduledFor: new Date(canceled.startsAt.getTime() - 24 * WA_HOUR),
+        status: "canceled",
+        skipReason: "appointment_status",
+      },
+      {
+        appointmentId: canceled.id,
+        ruleId: WA_RULE_IDS.cancellation,
+        event: "cancellation",
+        occurrenceKey: OCCURRENCE_CANCELED,
+        forStartsAt: canceled.startsAt,
+        scheduledFor: sentAt,
+        status: "read",
+        channel: "whatsapp_twilio",
+        providerMessageId: seedSid(),
+        attempts: 1,
+        claimedAt: sentAt,
+        sentAt,
+        deliveredAt: new Date(sentAt.getTime() + 60_000),
+        readAt: new Date(now.getTime() - WA_HOUR),
+      },
+    );
+  }
+
+  const summary = messages.reduce<Record<string, number>>((acc, m) => {
+    const key = m.skipReason ? `${m.status}:${m.skipReason}` : `${m.status}`;
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  const settings: typeof whatsappSettings.$inferInsert = {
+    id: "whatsapp",
+    enabled: false,
+  };
+  return { settings, templates, rules, messages, summary };
 }
 
 // ── History (prompts/30) ────────────────────────────────────────────────────

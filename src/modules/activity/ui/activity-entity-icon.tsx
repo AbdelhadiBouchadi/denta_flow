@@ -4,6 +4,7 @@ import {
   FileSignatureIcon,
   FileTextIcon,
   ImageIcon,
+  MessageCircleIcon,
   PillIcon,
   SmileIcon,
   StethoscopeIcon,
@@ -29,6 +30,7 @@ const ICONS: Record<ActivityEntityType, LucideIcon> = {
   [ActivityEntityType.PrescriptionPack]: PillIcon,
   [ActivityEntityType.CertificateTemplate]: FileSignatureIcon,
   [ActivityEntityType.PatientFile]: ImageIcon,
+  [ActivityEntityType.Whatsapp]: MessageCircleIcon,
 };
 
 /** The badge palette's tints (06-ui.md §4) — tokens only, never a hex. */

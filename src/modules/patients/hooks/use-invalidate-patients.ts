@@ -38,5 +38,8 @@ export const useInvalidatePatients = () => {
     // `/statistiques`: «Nouveaux patients», «Patients par assurance» (an
     // insurer change, an archive), and everything a remove cascades to.
     await queryClient.invalidateQueries(trpc.statistics.pathFilter());
+    // «Rappels» and the journal print the patient's name, masked number and
+    // consent-driven actions: a consent or phone change must reach them.
+    await queryClient.invalidateQueries(trpc.whatsapp.pathFilter());
   }, [queryClient, trpc]);
 };

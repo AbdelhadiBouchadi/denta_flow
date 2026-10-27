@@ -38,6 +38,12 @@ import { logActivity } from "@/modules/activity/server/log";
 import { APPOINTMENT_SUMMARIES } from "@/modules/activity/summaries";
 import { ActivityAction, ActivityEntityType } from "@/modules/activity/types";
 import { formatPatientName } from "@/modules/patients/derived";
+// WhatsApp messages ride in the same batch as the booking change (prompts/33).
+import {
+  buildMessageStatements,
+  loadMessagingContext,
+  type MessagingContext,
+} from "@/modules/whatsapp/server/scheduling";
 import {
   adminProcedure,
   createTRPCRouter,
@@ -296,14 +302,20 @@ const logAppointment = (
  */
 const statusStoreFor = (
   staffId: string,
+  messaging: Promise<MessagingContext>,
 ): AppointmentStatusStore<typeof appointments.$inferSelect> => {
   let patient: { id: string; name: string } | null = null;
+  let startsAt: Date | null = null;
+  // Awaited only by a write that happens; a request refused before it (not
+  // found, illegal transition) must not leave an unhandled rejection behind.
+  messaging.catch(() => undefined);
 
   return {
     readStatus: async (id) => {
       const [row] = await db
         .select({
           status: appointments.status,
+          startsAt: appointments.startsAt,
           patientId: patients.id,
           firstName: patients.firstName,
           lastName: patients.lastName,
@@ -314,16 +326,26 @@ const statusStoreFor = (
         .limit(1);
       if (!row) return null;
       patient = { id: row.patientId, name: formatPatientName(row) };
+      startsAt = row.startsAt;
       // The pgEnum values and the TS enum are kept in lockstep (types.ts).
       return row.status as AppointmentStatus;
     },
     writeStatusIf: async (id, from, to) => {
-      if (!patient) return undefined;
+      if (!patient || !startsAt) return undefined;
       const now = new Date();
       // `arrivedAt` rides in the same UPDATE as the status, so the two can
       // never disagree. `undefined` leaves it out of the SET: kept.
       const arrivedAt = arrivedAtFor(to, now);
       const hasStatus = eq(appointments.status, from);
+      // A cancellation supersedes the pending messages and plans the
+      // «Annulation» one; arrived / completed / no-show cancel what is pending.
+      // Guarded on the NEW status: a CONFLICT writes none of them.
+      const messages = buildMessageStatements(
+        await messaging,
+        to === "canceled"
+          ? { kind: "canceled", appointmentId: id, startsAt, now }
+          : { kind: "status", appointmentId: id, status: to, now },
+      );
       // One batch: the line locks the row while it still has `from`, the
       // UPDATE then lands on it. A status changed meanwhile matches neither:
       // CONFLICT, and no line.
@@ -343,6 +365,7 @@ const statusStoreFor = (
           })
           .where(and(eq(appointments.id, id), hasStatus))
           .returning(),
+        ...messages,
       ]);
       return updated;
     },
@@ -558,10 +581,12 @@ export const appointmentsRouter = createTRPCRouter({
       // Independent reads, one round trip each: run them side by side. The
       // overlap check comes before any confirmation, so nobody confirms an
       // overtime slot only to be told it is taken.
-      const [, , warnings] = await Promise.all([
+      const [, , warnings, messaging] = await Promise.all([
         assertPractitioner(input.practitionerId),
         assertNoOverlap(input.practitionerId, slot),
         bookingWarnings(input.practitionerId, slot),
+        // Read alongside the others: the message rows join the batch below.
+        loadMessagingContext(),
       ]);
 
       if (warnings.length > 0 && !input.confirmOutOfHours) {
@@ -609,6 +634,14 @@ export const appointmentsRouter = createTRPCRouter({
             patientId: input.patientId,
             summary: APPOINTMENT_SUMMARIES.created(patient, slot.startsAt),
             staffId: ctx.auth.user.id,
+          }),
+          // The reminder (and the confirmation, when that rule is on), after
+          // the INSERT: a refused booking takes them with it.
+          ...buildMessageStatements(messaging, {
+            kind: "created",
+            appointmentId: id,
+            startsAt: slot.startsAt,
+            now,
           }),
         ]);
 
@@ -673,7 +706,7 @@ export const appointmentsRouter = createTRPCRouter({
         existing.practitionerId !== input.practitionerId ||
         existing.startsAt.getTime() !== slot.startsAt.getTime();
 
-      const [, , warnings] = await Promise.all([
+      const [, , warnings, messaging] = await Promise.all([
         assertPractitioner(input.practitionerId, existing.practitionerId),
         // A canceled appointment holds no slot — the constraint ignores it too.
         existing.status === "canceled"
@@ -682,7 +715,12 @@ export const appointmentsRouter = createTRPCRouter({
         // Editing the notes of an overtime appointment must not ask for the
         // same confirmation again: only a new slot is re-warned.
         slotChanged ? bookingWarnings(input.practitionerId, slot) : [],
+        loadMessagingContext(),
       ]);
+      // Only a new START moves messages: the practitioner, the duration, the
+      // type or the notes change nothing the patient was told (prompts/33).
+      const startChanged =
+        existing.startsAt.getTime() !== slot.startsAt.getTime();
 
       if (warnings.length > 0 && !input.confirmOutOfHours) {
         return {
@@ -747,6 +785,17 @@ export const appointmentsRouter = createTRPCRouter({
                 staffId: ctx.auth.user.id,
               }),
               write,
+              // After the UPDATE and guarded on the NEW start: a stale save
+              // (CONFLICT) leaves the old start in place, so none of these
+              // match — the old reminders stay, nothing new is planned.
+              ...(startChanged
+                ? buildMessageStatements(messaging, {
+                    kind: "rescheduled",
+                    appointmentId: input.id,
+                    startsAt: slot.startsAt,
+                    now: new Date(),
+                  })
+                : []),
             ]);
             return row;
           },
@@ -777,7 +826,8 @@ export const appointmentsRouter = createTRPCRouter({
     .mutation(async ({ input, ctx }) => {
       try {
         return await changeStatus(
-          statusStoreFor(ctx.auth.user.id),
+          // Started now, awaited inside the write: in parallel with the read.
+          statusStoreFor(ctx.auth.user.id, loadMessagingContext()),
           input.id,
           input.status,
         );

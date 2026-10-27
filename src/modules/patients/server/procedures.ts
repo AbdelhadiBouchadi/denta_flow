@@ -56,6 +56,7 @@ import {
   patientInsertSchema,
   patientUpdateSchema,
 } from "../schemas";
+import { consentSchema } from "@/modules/whatsapp/schemas";
 
 // ── Derived scalars ─────────────────────────────────────────────────────────
 // Every figure below is computed by Postgres and cast to int, so it arrives as
@@ -257,12 +258,20 @@ export const patientsRouter = createTRPCRouter({
         search: z.string().nullish(),
         tagId: z.string().nullish(),
         insurerId: z.string().nullish(),
+        consent: consentSchema.nullish(),
         includeArchived: z.boolean().default(false),
       }),
     )
     .query(async ({ input }) => {
-      const { page, pageSize, search, tagId, insurerId, includeArchived } =
-        input;
+      const {
+        page,
+        pageSize,
+        search,
+        tagId,
+        insurerId,
+        consent,
+        includeArchived,
+      } = input;
 
       // A search typed as "0612…" must still find a phone stored as "+2126…".
       const phonePatterns = search
@@ -301,6 +310,7 @@ export const patientsRouter = createTRPCRouter({
             )
           : undefined,
         insurerId ? eq(patients.insurerId, insurerId) : undefined,
+        consent ? eq(patients.whatsappConsent, consent) : undefined,
       );
 
       const items = await db

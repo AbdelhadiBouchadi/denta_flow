@@ -11,6 +11,7 @@ import {
   patients,
   payments,
   user,
+  whatsappSettings,
 } from "@/database/schema";
 import { chargesColumns, spentInRange } from "@/database/sql/expenses";
 import {
@@ -22,6 +23,11 @@ import { clinicDayRange, toClinicTime } from "@/lib/time";
 import type { AppointmentStatus } from "@/modules/appointments/types";
 import { formatPatientName } from "@/modules/patients/derived";
 import { remainingCents } from "@/modules/patients/server/procedures";
+// «Messages WhatsApp à vérifier»: the slice's one definition (prompts/33).
+import { resolveMode } from "@/modules/whatsapp/mode";
+import { readWhatsappEnv } from "@/modules/whatsapp/server/provider/twilio-env";
+import { attentionCountQuery } from "@/modules/whatsapp/server/queries";
+import { WhatsappMode } from "@/modules/whatsapp/types";
 import {
   adminProcedure,
   createTRPCRouter,
@@ -70,9 +76,9 @@ export const dashboardRouter = createTRPCRouter({
     const today = clinicDayRange(now);
     const lateBefore = new Date(now.getTime() - LATE_AFTER_MINUTES * MINUTE_MS);
 
-    // One round trip: three reads in one `db.batch`. Every count and every
+    // One round trip: five reads in one `db.batch`. Every count and every
     // balance is computed in SQL.
-    const [[counts], rows, debtors] = await db.batch([
+    const [[counts], rows, debtors, [whatsappAttention], [whatsapp]] = await db.batch([
       db
         .select({
           todayTotal: count(),
@@ -129,7 +135,18 @@ export const dashboardRouter = createTRPCRouter({
         .where(gt(remainingCents, 0))
         .orderBy(desc(remainingCents), asc(patients.id))
         .limit(TOP_DEBTORS_LIMIT),
+      attentionCountQuery(now),
+      db
+        .select({ enabled: whatsappSettings.enabled })
+        .from(whatsappSettings)
+        .limit(1),
     ]);
+    const whatsappEnv = readWhatsappEnv();
+    const whatsappMode = resolveMode({
+      presence: whatsappEnv.presence,
+      from: whatsappEnv.from,
+      enabled: whatsapp?.enabled ?? false,
+    });
 
     return {
       /** The instant «today» was computed at — the banner's date. */
@@ -140,6 +157,9 @@ export const dashboardRouter = createTRPCRouter({
       todayRemaining: counts.todayRemaining,
       waitingCount: counts.waitingCount,
       completedCount: counts.completedCount,
+      // 0 in manual mode: nothing is sent automatically, so nothing to check.
+      whatsappToCheckCount:
+        whatsappMode === WhatsappMode.Manual ? 0 : whatsappAttention.count,
       appointments: rows.map(({ patient, status, ...row }) => ({
         ...row,
         // The pgEnum values and the TS enum are kept in lockstep (types.ts).

@@ -199,15 +199,17 @@ No i18n library, no translation files. Enum copy lives in the slice's `constants
 
 **Out of scope entirely — do not create, reference, import, stub, or prepare for:**
 
-- Any public or unauthenticated route; any `(public)` route group
+- Any public or unauthenticated route; any `(public)` route group — except the two self-authenticating machine routes of the amendment below
 - Patient accounts, patient sessions, patient portal, online booking by patients
 - Any availability / slot-computation procedure
 - **Fauteuils / chairs.** There is no chair entity, no chair column, no resource axis. The agenda filters by practitioner and colours by appointment type.
-- OTP, SMS, WhatsApp or any messaging gateway
-- Rate limiting (nothing is publicly reachable)
+- OTP, SMS, marketing messages, inbound conversations or bot replies, and any messaging gateway other than the amendment's Twilio WhatsApp
+- Rate limiting (nothing is publicly reachable; the two machine routes authenticate every request)
 - Billing, subscriptions, multi-clinic, `clinicId`, organizations
-- Inngest or any background-job runner
+- Inngest, queues or any background-job runner other than the amendment's one cron route
 - Any i18n library
+
+**Amendment (branch 33).** Allowed: **outbound WhatsApp messages about the clinic's own appointments through Twilio** — rappel, confirmation, modification, annulation — sent by **one cron route** (`/api/cron/whatsapp`, `CRON_SECRET`) and tracked through **one webhook route** (`/api/webhooks/whatsapp`, `X-Twilio-Signature`). Everything else in the list above stays out of scope. See `docs/architecture/09-whatsapp.md`.
 
 If a task appears to need one of these, **stop and say so in one sentence** rather than building a partial version. A half-built stub is worse than an absence — it gets mistaken for a contract.
 

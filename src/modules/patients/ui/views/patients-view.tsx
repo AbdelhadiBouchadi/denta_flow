@@ -28,7 +28,7 @@ const PatientsView = () => {
   );
 
   const hasFilters = Boolean(
-    filters.search || filters.tagId || filters.insurerId,
+    filters.search || filters.tagId || filters.insurerId || filters.consent,
   );
 
   const isEmpty = data.items.length === 0;
