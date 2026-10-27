@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { db } from "@/database";
 import {
@@ -13,6 +13,7 @@ import {
   whatsappTemplates,
 } from "@/database/schema";
 import {
+  APPROVAL_REFRESH_MIN_BUDGET_MS,
   CLAIM_LIMIT,
   CRON_MAX_DURATION_SECONDS,
   CRON_SAFETY_MARGIN_MS,
@@ -24,7 +25,9 @@ import {
   TRANSIENT_RETRY_MINUTES,
 } from "../constants";
 import { checkClaimedRow } from "../send-check";
-import { WhatsappEvent } from "../types";
+import { WhatsappEvent, type MessageChip } from "../types";
+import { refreshTemplateStatuses, type RefreshSummary } from "./approval";
+import type { ContentApi } from "./provider/twilio-content";
 import type { MessagingProvider, SendResult } from "./provider/types";
 import { toSendWindow } from "./scheduling";
 
@@ -38,6 +41,14 @@ import { toSendWindow } from "./scheduling";
  * 3. each claimed row is re-validated (`checkClaimedRow`) and sent, skipped,
  *    canceled or rescheduled; every outcome write is guarded on `sending`.
  *
+ * prompts/33b adds two steps around those, nothing inside them:
+ *
+ * - before claiming (automatic mode only), due rows whose rule's template
+ *   has no APPROVED version become `needs_attention` / `template_unapproved`
+ *   — never sent to fail at Twilio;
+ * - after sending, if time is left, the `pending` templates' approval status
+ *   is refreshed — at most 10 per tick.
+ *
  * Logs counts and message ids only — never a number or a message text.
  */
 
@@ -50,6 +61,8 @@ export interface CronDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Defaults to the route's `maxDuration` minus a safety margin. */
   budgetMs?: number;
+  /** Real sender only: refreshes pending template approvals after sending. */
+  contentApi?: ContentApi | null;
 }
 
 export interface CronSummary {
@@ -61,6 +74,10 @@ export interface CronSummary {
   canceled: number;
   rescheduled: number;
   released: number;
+  /** Due rows held back: their template is not approved yet. */
+  templateUnapproved: number;
+  /** The approval refresh, or `null` when it did not run. */
+  approvals: RefreshSummary | null;
 }
 
 const defaultSleep = (ms: number) =>
@@ -81,6 +98,39 @@ export const flagStaleSending = async (now: Date) => {
           whatsappMessages.claimedAt,
           new Date(now.getTime() - STALE_SENDING_MINUTES * MINUTE_MS),
         ),
+      ),
+    )
+    .returning({ id: whatsappMessages.id });
+  return flagged.length;
+};
+
+/**
+ * Step 1b (33b, automatic mode) — due rows of an enabled rule whose active
+ * template has no approved resource: `needs_attention`, reason
+ * `template_unapproved`, for «Rappels» to show. One statement, before the
+ * claim, so they are never claimed. A disabled rule or template is left to
+ * the send-time check, which cancels its rows.
+ */
+export const flagUnapprovedDue = async (now: Date) => {
+  const unapprovedRules = db
+    .select({ id: whatsappRules.id })
+    .from(whatsappRules)
+    .innerJoin(whatsappTemplates, eq(whatsappRules.templateId, whatsappTemplates.id))
+    .where(
+      and(
+        eq(whatsappRules.enabled, true),
+        eq(whatsappTemplates.isActive, true),
+        isNull(whatsappTemplates.activeContentSid),
+      ),
+    );
+  const flagged = await db
+    .update(whatsappMessages)
+    .set({ status: "needs_attention", skipReason: "template_unapproved", updatedAt: now })
+    .where(
+      and(
+        eq(whatsappMessages.status, "scheduled"),
+        lte(whatsappMessages.scheduledFor, now),
+        inArray(whatsappMessages.ruleId, unapprovedRules),
       ),
     )
     .returning({ id: whatsappMessages.id });
@@ -136,8 +186,10 @@ const loadClaimed = (ids: string[]) =>
       ruleId: whatsappRules.id,
       template: {
         id: whatsappTemplates.id,
-        contentSid: whatsappTemplates.contentSid,
-        manualText: whatsappTemplates.manualText,
+        activeContentSid: whatsappTemplates.activeContentSid,
+        activeVariables: whatsappTemplates.activeVariables,
+        body: whatsappTemplates.body,
+        variables: whatsappTemplates.variables,
         isActive: whatsappTemplates.isActive,
       },
     })
@@ -229,9 +281,14 @@ export const runCronTick = async (deps: CronDeps): Promise<CronSummary> => {
     canceled: 0,
     rescheduled: 0,
     released: 0,
+    templateUnapproved: 0,
+    approvals: null,
   };
 
   summary.needsAttention += await flagStaleSending(clock());
+  if (!deps.provider.sandbox) {
+    summary.templateUnapproved = await flagUnapprovedDue(clock());
+  }
 
   const claimed = await claimDueRows(
     clock(),
@@ -260,11 +317,14 @@ export const runCronTick = async (deps: CronDeps): Promise<CronSummary> => {
         rule: row.ruleId ? { enabled: !!row.ruleEnabled } : null,
         template: row.template?.id
           ? {
-              contentSid: row.template.contentSid,
-              manualText: row.template.manualText!,
+              activeContentSid: row.template.activeContentSid,
+              activeVariables: row.template.activeVariables as MessageChip[] | null,
+              body: row.template.body!,
+              variables: row.template.variables as MessageChip[],
               isActive: !!row.template.isActive,
             }
           : null,
+        sandbox: deps.provider.sandbox,
         window,
         now: clock(),
       });
@@ -301,6 +361,13 @@ export const runCronTick = async (deps: CronDeps): Promise<CronSummary> => {
             .set({ status: "canceled", skipReason: check.reason, updatedAt: now })
             .where(isSending(row.id));
           summary.canceled++;
+          break;
+        case "attention":
+          await db
+            .update(whatsappMessages)
+            .set({ status: "needs_attention", skipReason: check.reason, updatedAt: now })
+            .where(isSending(row.id));
+          summary.templateUnapproved++;
           break;
         case "skip":
           await db
@@ -343,6 +410,14 @@ export const runCronTick = async (deps: CronDeps): Promise<CronSummary> => {
         }
       }
     }
+  }
+
+  // After sending, never before: approvals wait, patients do not.
+  if (
+    deps.contentApi &&
+    budgetMs - (clock().getTime() - startedAt) >= APPROVAL_REFRESH_MIN_BUDGET_MS
+  ) {
+    summary.approvals = await refreshTemplateStatuses(deps.contentApi, { now: clock() });
   }
 
   await db

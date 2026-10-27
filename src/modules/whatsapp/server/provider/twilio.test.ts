@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { TWILIO_ERROR_CODES } from "../../constants";
 import { SAMPLE_PARAMS } from "../../message";
+import { TWILIO_ERROR_CODES } from "../../provider-constants";
+import { MessageChip } from "../../types";
 import { classifyNetworkError, classifyTwilioResponse } from "./classify";
 import { buildTwilioForm, createTwilioProvider } from "./twilio";
 import type { SendInput } from "./types";
@@ -10,7 +11,12 @@ const SID = "HX0123456789abcdef0123456789abcdef";
 
 const input: SendInput = {
   to: "212612345678",
-  template: { contentSid: SID, manualText: "Bonjour {prenom}" },
+  template: {
+    contentSid: SID,
+    contentVariables: [MessageChip.FirstName, MessageChip.Date, MessageChip.Time],
+    body: "Bonjour {{1}}",
+    variables: [MessageChip.FirstName],
+  },
   params: SAMPLE_PARAMS,
   statusCallbackUrl: "https://cabinet.example.ma/api/webhooks/whatsapp",
 };
@@ -99,10 +105,12 @@ describe("buildTwilioForm", () => {
     expect(form.get("From")).toBe("whatsapp:+212600000000");
     expect(form.get("To")).toBe("whatsapp:+212612345678");
     expect(form.get("ContentSid")).toBe(SID);
-    expect(JSON.parse(form.get("ContentVariables")!)).toHaveProperty(
-      "1",
-      "Karim",
-    );
+    // The approved resource's own numbering: exactly the values it uses.
+    expect(JSON.parse(form.get("ContentVariables")!)).toEqual({
+      "1": "Karim",
+      "2": SAMPLE_PARAMS.date,
+      "3": SAMPLE_PARAMS.time,
+    });
     expect(form.get("Body")).toBeNull();
     expect(form.get("StatusCallback")).toBe(input.statusCallbackUrl);
   });
@@ -119,7 +127,7 @@ describe("buildTwilioForm", () => {
   it("refuses a template without SID outside the sandbox", () => {
     const result = buildTwilioForm(config, {
       ...input,
-      template: { contentSid: null, manualText: "x" },
+      template: { ...input.template, contentSid: null, contentVariables: null },
     });
     expect(result).toMatchObject({
       error: { kind: "permanent", code: "template_not_configured" },

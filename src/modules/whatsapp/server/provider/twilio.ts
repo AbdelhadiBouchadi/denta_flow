@@ -1,5 +1,10 @@
-import { SEND_TIMEOUT_MS, TWILIO_API_BASE } from "../../constants";
-import { renderManualText, toContentVariables } from "../../message";
+import { SEND_TIMEOUT_MS } from "../../constants";
+import { TWILIO_API_BASE } from "../../provider-constants";
+import {
+  chipValuesFrom,
+  contentVariablesFor,
+  renderCanonical,
+} from "../../template-body";
 import { classifyNetworkError, classifyTwilioResponse } from "./classify";
 import type { MessagingProvider, SendInput, SendResult } from "./types";
 
@@ -13,8 +18,9 @@ export interface TwilioConfig {
 
 /**
  * The form body of one `POST …/Messages.json`. In the sandbox, custom
- * templates are not available: the manual text goes as `Body` (accepted only
- * inside the 24-hour window the recipient's «join» opened).
+ * templates are not available: the rendered text goes as `Body` (accepted
+ * only inside the 24-hour window the recipient's «join» opened). Elsewhere
+ * the approved resource, with ITS variable order.
  */
 export const buildTwilioForm = (
   config: Pick<TwilioConfig, "from" | "sandbox">,
@@ -25,19 +31,23 @@ export const buildTwilioForm = (
     To: `whatsapp:+${input.to}`,
   });
 
+  const values = chipValuesFrom(input.params);
   if (config.sandbox) {
-    form.set("Body", renderManualText(input.template.manualText, input.params));
-  } else if (input.template.contentSid) {
+    form.set("Body", renderCanonical(input.template, values));
+  } else if (input.template.contentSid && input.template.contentVariables) {
     // `ContentSid` replaces `Body` (Content API docs).
     form.set("ContentSid", input.template.contentSid);
-    form.set("ContentVariables", toContentVariables(input.params));
+    form.set(
+      "ContentVariables",
+      JSON.stringify(contentVariablesFor(input.template.contentVariables, values)),
+    );
   } else {
     return {
       error: {
         ok: false,
         kind: "permanent",
         code: "template_not_configured",
-        message: "The template has no Twilio Content SID.",
+        message: "The template has no approved Twilio Content SID.",
       },
     };
   }

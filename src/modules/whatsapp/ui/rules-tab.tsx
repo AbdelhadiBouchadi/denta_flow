@@ -18,13 +18,15 @@ import { getColumns } from "./rules-columns";
 export const RulesTab = () => {
   const trpc = useTRPC();
   const { data } = useSuspenseQuery(trpc.whatsapp.listRules.queryOptions());
+  const { data: status } = useSuspenseQuery(trpc.whatsapp.getServiceStatus.queryOptions());
+  const approvalRequired = status.approvalRequired;
   const [dialog, setDialog] = useState<{ open: boolean; rule?: WhatsappRuleItem }>({
     open: false,
   });
   // Stable, or the table would rebuild its columns on every render.
   const columns = useMemo(
-    () => getColumns((rule) => setDialog({ open: true, rule })),
-    [],
+    () => getColumns((rule) => setDialog({ open: true, rule }), approvalRequired),
+    [approvalRequired],
   );
 
   return (

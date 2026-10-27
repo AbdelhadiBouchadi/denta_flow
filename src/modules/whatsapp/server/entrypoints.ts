@@ -3,6 +3,12 @@ import "server-only";
 import { db } from "@/database";
 import { whatsappSettings } from "@/database/schema";
 import { isSendingMode, resolveMode } from "../mode";
+import {
+  contentApiFor,
+  refreshTemplateStatuses,
+  submissionAvailability,
+  type RefreshSummary,
+} from "./approval";
 import { runCronTick, type CronSummary } from "./cron";
 import { createTwilioProvider } from "./provider/twilio";
 import type { MessagingProvider } from "./provider/types";
@@ -18,10 +24,15 @@ import { processStatusCallback } from "./webhook";
  * What the two route files call — they stay thin (prompts/33, «Server»).
  */
 
-/** The cron's work, or `{ skipped: "manual" }` when nothing may be sent. */
+/**
+ * The cron's work, or `{ skipped: "manual" }` when nothing may be sent. With
+ * a real sender's credentials and the switch off, the tick still refreshes
+ * pending template approvals (33b): templates get approved BEFORE the clinic
+ * turns automatic sending on.
+ */
 export const runWhatsappCron = async (
   override?: { provider: MessagingProvider },
-): Promise<CronSummary | { skipped: "manual" }> => {
+): Promise<CronSummary | { skipped: "manual"; approvals?: RefreshSummary }> => {
   const whatsappEnv = readWhatsappEnv();
   const [settings] = await db
     .select({ enabled: whatsappSettings.enabled })
@@ -33,13 +44,22 @@ export const runWhatsappCron = async (
     from: whatsappEnv.from,
     enabled: settings?.enabled ?? false,
   });
+  const contentApi =
+    whatsappEnv.twilio && submissionAvailability(whatsappEnv.twilio) === "available"
+      ? contentApiFor(whatsappEnv.twilio)
+      : null;
+
   if (!isSendingMode(mode) || (!whatsappEnv.twilio && !override)) {
-    return { skipped: "manual" };
+    if (!contentApi) return { skipped: "manual" };
+    const approvals = await refreshTemplateStatuses(contentApi);
+    console.info("[whatsapp] cron manual, approvals", JSON.stringify(approvals));
+    return { skipped: "manual", approvals };
   }
 
   const summary = await runCronTick({
     provider: override?.provider ?? createTwilioProvider(whatsappEnv.twilio!),
     statusCallbackUrl: webhookUrl(),
+    contentApi,
   });
   // Counts only.
   console.info("[whatsapp] cron", JSON.stringify(summary));

@@ -1,4 +1,5 @@
 import type { MessageParams } from "../../message";
+import type { MessageChip } from "../../types";
 
 /**
  * The sending layer (prompts/33, decision 9). Rules, rows, the cron and the
@@ -9,10 +10,22 @@ export interface SendInput {
   /** Recipient digits, country code first, no «+» — `toWhatsAppNumber`'s output. */
   to: string;
   /** The template's CURRENT values, read at send time. */
-  template: { contentSid: string | null; manualText: string };
+  template: SendTemplate;
   params: MessageParams;
   /** Where the provider reports delivery; `null` when no public URL is set. */
   statusCallbackUrl: string | null;
+}
+
+/**
+ * What one message is sent with. Outside the sandbox: the APPROVED resource
+ * and the variable order it was approved with. In the sandbox: the current
+ * text, rendered (no approval exists there).
+ */
+export interface SendTemplate {
+  contentSid: string | null;
+  contentVariables: MessageChip[] | null;
+  body: string;
+  variables: MessageChip[];
 }
 
 export type SendFailureKind =

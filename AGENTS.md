@@ -209,7 +209,7 @@ No i18n library, no translation files. Enum copy lives in the slice's `constants
 - Inngest, queues or any background-job runner other than the amendment's one cron route
 - Any i18n library
 
-**Amendment (branch 33).** Allowed: **outbound WhatsApp messages about the clinic's own appointments through Twilio** — rappel, confirmation, modification, annulation — sent by **one cron route** (`/api/cron/whatsapp`, `CRON_SECRET`) and tracked through **one webhook route** (`/api/webhooks/whatsapp`, `X-Twilio-Signature`). Everything else in the list above stays out of scope. See `docs/architecture/09-whatsapp.md`.
+**Amendment (branch 33).** Allowed: **outbound WhatsApp messages about the clinic's own appointments through Twilio** — rappel, confirmation, modification, annulation — sent by **one cron route** (`/api/cron/whatsapp`, `CRON_SECRET`) and tracked through **one webhook route** (`/api/webhooks/whatsapp`, `X-Twilio-Signature`). **Branch 33b** extends it: **creating outbound message templates and submitting them for WhatsApp approval through Twilio's Content API**, from Paramètres › WhatsApp. Buttons, quick replies, inbound messages, SMS and marketing templates stay out of scope. Everything else in the list above stays out of scope. See `docs/architecture/09-whatsapp.md`.
 
 If a task appears to need one of these, **stop and say so in one sentence** rather than building a partial version. A half-built stub is worse than an absence — it gets mistaken for a contract.
 

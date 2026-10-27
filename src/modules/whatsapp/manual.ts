@@ -1,10 +1,17 @@
 import {
   ACTIVE_APPOINTMENT_STATUSES,
   CANCELED_APPOINTMENT_STATUS,
+  MANUALLY_FIXABLE_SKIPS,
   WHATSAPP_ERRORS,
 } from "./constants";
 import { toWhatsAppNumber } from "./phone";
-import { WhatsappConsent, WhatsappEvent, WhatsappMessageStatus } from "./types";
+import {
+  WhatsappConsent,
+  WhatsappEvent,
+  WhatsappMessageStatus,
+  WhatsappMode,
+  type WhatsappSkipReason,
+} from "./types";
 
 /**
  * When a message may be opened by hand in WhatsApp (`wa.me`). One rule, read
@@ -52,4 +59,34 @@ export const manualSendRefusal = ({
   if (consent === WhatsappConsent.Declined) return WHATSAPP_ERRORS.consentDeclined;
   if (!toWhatsAppNumber(phone).ok) return WHATSAPP_ERRORS.invalidPhone;
   return null;
+};
+
+/**
+ * Whether «Rappels» offers a manual send at all (prompts/33b, decision 1).
+ * Manual mode: every message is sent by hand, as in 33. Automatic and
+ * sandbox: only a message a person must rescue — failed, to check, or
+ * skipped for a reason a human can work around. `manualSendRefusal` still
+ * applies on top.
+ */
+export const manualSendOffered = ({
+  mode,
+  status,
+  skipReason,
+}: {
+  mode: WhatsappMode;
+  status: WhatsappMessageStatus;
+  skipReason: string | null;
+}) => {
+  if (mode === WhatsappMode.Manual) return true;
+  if (
+    status === WhatsappMessageStatus.Failed ||
+    status === WhatsappMessageStatus.NeedsAttention
+  ) {
+    return true;
+  }
+  return (
+    status === WhatsappMessageStatus.Skipped &&
+    skipReason !== null &&
+    MANUALLY_FIXABLE_SKIPS.includes(skipReason as WhatsappSkipReason)
+  );
 };

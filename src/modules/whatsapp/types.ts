@@ -15,7 +15,7 @@ export type WhatsappJournal = WhatsappOutputs["getJournal"];
 export type WhatsappJournalRow = WhatsappJournal["items"][number];
 export type WhatsappServiceStatus = WhatsappOutputs["getServiceStatus"];
 export type WhatsappTemplateItem =
-  WhatsappOutputs["listTemplates"]["items"][number];
+  WhatsappOutputs["getTemplates"]["items"][number];
 export type WhatsappRuleItem = WhatsappOutputs["listRules"]["items"][number];
 export type WhatsappSettingsValues = WhatsappOutputs["getSettings"];
 export type WhatsappLatestMessage =
@@ -65,6 +65,37 @@ export enum WhatsappSkipReason {
   AppointmentStatus = "appointment_status",
   ClinicPhoneMissing = "clinic_phone_missing",
   Superseded = "superseded",
+  /** Automatic mode, and the rule's template has no approved version yet. */
+  TemplateUnapproved = "template_unapproved",
+}
+
+/**
+ * A message as the editor holds it: plain text and chips, never a string
+ * with placeholders. `template-body.ts` converts it to and from the
+ * canonical body sent for approval.
+ */
+export type BodySegment =
+  | { type: "text"; text: string }
+  | { type: "chip"; chip: MessageChip };
+
+/** `whatsapp_template_approval` — the state of a template's CURRENT text. */
+export enum TemplateApproval {
+  Draft = "draft",
+  Pending = "pending",
+  Approved = "approved",
+  Rejected = "rejected",
+}
+
+/**
+ * The values a message can carry — the editor's chips. The order is 33's
+ * positional order; a template numbers the ones it uses by first appearance.
+ */
+export enum MessageChip {
+  FirstName = "firstName",
+  Date = "date",
+  Time = "time",
+  ClinicName = "clinicName",
+  ClinicPhone = "clinicPhone",
 }
 
 /**
@@ -77,7 +108,7 @@ export enum WhatsappMode {
   Manual = "manual",
 }
 
-/** Paramètres › WhatsApp tabs — URL values (`waTab`). */
+/** Paramètres › WhatsApp tabs — URL values (`waTab`). `service` is «Connexion». */
 export enum WhatsappTab {
   Service = "service",
   Templates = "templates",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { maskPhone, toWhatsAppNumber, waMeLink } from "./phone";
+import { formatSenderNumber, maskPhone, toWhatsAppNumber, waMeLink } from "./phone";
 
 describe("toWhatsAppNumber", () => {
   it.each([
@@ -60,5 +60,17 @@ describe("waMeLink", () => {
     expect(waMeLink("212612345678", "Bonjour Karim, à 14:30 ?")).toBe(
       "https://wa.me/212612345678?text=Bonjour%20Karim%2C%20%C3%A0%2014%3A30%20%3F",
     );
+  });
+});
+
+describe("formatSenderNumber", () => {
+  it.each([
+    ["whatsapp:+212612345678", "+212 6 12 34 56 78"],
+    ["whatsapp:+14155238886", "+1 415 523 8886"],
+    ["whatsapp:+33612345678", "+336 123 456 78"],
+    ["whatsapp:+12", null],
+    [null, null],
+  ])("%s → %s", (from, expected) => {
+    expect(formatSenderNumber(from)).toBe(expected);
   });
 });

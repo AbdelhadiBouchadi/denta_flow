@@ -1,4 +1,4 @@
-import { TWILIO_SANDBOX_NUMBER, type EnvKey } from "./constants";
+import { TWILIO_SANDBOX_NUMBER, type EnvKey } from "./provider-constants";
 import { WhatsappMode } from "./types";
 
 /** Presence of each env variable — booleans only, never a value. */

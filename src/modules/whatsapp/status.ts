@@ -1,4 +1,4 @@
-import { RETRYABLE_ERROR_CODES } from "./constants";
+import { RETRYABLE_ERROR_CODES } from "./provider-constants";
 import { WhatsappMessageStatus as Status } from "./types";
 
 /**

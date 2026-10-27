@@ -7,6 +7,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  sendErrorLabel,
   SKIP_REASON_LABELS,
   STATUS_LABELS,
   STATUS_TONES,
@@ -24,24 +25,26 @@ interface MessageStatusBadgeProps {
   skipReason?: string | null;
   unscheduledReason?: UnscheduledReason | null;
   errorCode?: string | null;
-  errorMessage?: string | null;
 }
 
-/** Why a row is where it is — the reason or Twilio's error, as one line. */
+/**
+ * Why a row is where it is, in plain French: the skip reason, or the sending
+ * error by its code (33b — the provider's own English wording stays out of
+ * clinic screens).
+ */
 export const statusDetail = ({
   skipReason,
   unscheduledReason,
   errorCode,
-  errorMessage,
 }: Omit<MessageStatusBadgeProps, "status">) => {
   if (unscheduledReason) return UNSCHEDULED_REASON_LABELS[unscheduledReason];
   if (skipReason) return SKIP_REASON_LABELS[skipReason as WhatsappSkipReason];
-  if (errorCode) return errorMessage ? `${errorCode} — ${errorMessage}` : errorCode;
+  if (errorCode) return sendErrorLabel(errorCode);
   return null;
 };
 
 /**
- * The message's status pill. Its reason (skip reason, Twilio error) sits in
+ * The message's status pill. Its reason (skip reason, sending error) sits in
  * a tooltip AND in the accessible name, so it is never hover-only.
  */
 export const MessageStatusBadge = (props: MessageStatusBadgeProps) => {

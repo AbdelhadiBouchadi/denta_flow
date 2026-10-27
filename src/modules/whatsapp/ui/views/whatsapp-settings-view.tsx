@@ -33,7 +33,7 @@ const WhatsappSettingsView = () => {
   // Read here so a failure of any of them reaches this view's boundary.
   useSuspenseQuery(trpc.whatsapp.getServiceStatus.queryOptions());
   useSuspenseQuery(trpc.whatsapp.getSettings.queryOptions());
-  useSuspenseQuery(trpc.whatsapp.listTemplates.queryOptions());
+  useSuspenseQuery(trpc.whatsapp.getTemplates.queryOptions());
   useSuspenseQuery(trpc.whatsapp.listRules.queryOptions());
   useSuspenseQuery(trpc.whatsapp.getJournal.queryOptions(journalQueryInput(filters)));
 

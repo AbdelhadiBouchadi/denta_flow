@@ -5,6 +5,7 @@ import { isSandboxSender, resolveMode, type EnvPresence } from "./mode";
 import { settingsUpdateSchema } from "./schemas";
 import { checkClaimedRow, type ClaimedRow } from "./send-check";
 import {
+  MessageChip,
   WhatsappEvent as E,
   WhatsappMode,
   WhatsappSkipReason as R,
@@ -19,7 +20,14 @@ const row = (overrides: Partial<ClaimedRow> = {}): ClaimedRow => ({
   patient: { firstName: "Karim", phone: "+212612345678", consent: "granted" },
   clinic: { name: "Cabinet", phone: "+212528843217" },
   rule: { enabled: true },
-  template: { contentSid: null, manualText: "Bonjour {prenom}", isActive: true },
+  template: {
+    activeContentSid: "HX" + "a".repeat(32),
+    activeVariables: [MessageChip.FirstName, MessageChip.Date],
+    body: "Bonjour {{1}}, le {{2}}.",
+    variables: [MessageChip.FirstName, MessageChip.Date],
+    isActive: true,
+  },
+  sandbox: false,
   window: { windowStart: "09:00", windowEnd: "19:00", minLeadMinutes: 120 },
   now: clinicInstant("2026-10-14", "15:00"),
   ...overrides,
@@ -89,6 +97,46 @@ describe("checkClaimedRow — the send-time authority", () => {
       action: "skip",
       reason: R.ClinicPhoneMissing,
     });
+  });
+
+  it("holds a row whose template has no approved version (33b)", () => {
+    expect(
+      checkClaimedRow(
+        row({ template: { ...row().template!, activeContentSid: null, activeVariables: null } }),
+      ),
+    ).toEqual({ action: "attention", reason: R.TemplateUnapproved });
+  });
+
+  it("sends the unapproved text in the sandbox, as the rendered body only", () => {
+    const check = checkClaimedRow(
+      row({
+        sandbox: true,
+        template: { ...row().template!, activeContentSid: null, activeVariables: null },
+      }),
+    );
+    expect(check.action).toBe("send");
+    if (check.action === "send") {
+      expect(check.template.contentSid).toBeNull();
+      expect(check.template.body).toBe("Bonjour {{1}}, le {{2}}.");
+    }
+  });
+
+  it("sends the APPROVED resource with its own variable order", () => {
+    const check = checkClaimedRow(
+      row({
+        template: {
+          ...row().template!,
+          // The text was edited since: other chips, but the approved one stays.
+          body: "Le {{1}} à {{2}}.",
+          variables: [MessageChip.Date, MessageChip.Time],
+        },
+      }),
+    );
+    expect(check.action).toBe("send");
+    if (check.action === "send") {
+      expect(check.template.contentSid).toBe("HX" + "a".repeat(32));
+      expect(check.template.contentVariables).toEqual([MessageChip.FirstName, MessageChip.Date]);
+    }
   });
 
   it("reschedules outside the window, skips past the lead", () => {

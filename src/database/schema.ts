@@ -121,7 +121,11 @@ export const whatsappMessageStatus = pgEnum("whatsapp_message_status", [
 export const whatsappChannel   = pgEnum("whatsapp_channel", ["whatsapp_twilio", "manual_link"]);
 export const whatsappSkipReason = pgEnum("whatsapp_skip_reason", [
   "no_consent", "invalid_phone", "landline", "too_late", "appointment_status",
-  "clinic_phone_missing", "superseded",
+  "clinic_phone_missing", "superseded", "template_unapproved",
+]);
+// prompts/33b: a template's WhatsApp approval, submitted from the app.
+export const whatsappTemplateApproval = pgEnum("whatsapp_template_approval", [
+  "draft", "pending", "approved", "rejected",
 ]);
 
 // ── Clinic settings: exactly one row, id = "clinic" ──────────────────────────
@@ -586,25 +590,58 @@ export const whatsappSettings = pgTable("whatsapp_settings", {
   check("whatsapp_settings_min_lead_range", sql`${t.minLeadMinutes} BETWEEN 0 AND 1440`),
 ]);
 
-// A named message the admin manages («Modèle associé»). `contentSid` points at
-// the Twilio Content Template approved for WhatsApp — the app never creates
-// templates in Twilio. `manualText` is what manual mode and the sandbox send.
+// A named message the admin manages («Modèle associé»), written in the app
+// and submitted for WhatsApp approval through Twilio's Content API (33b).
+//
+// `body` is the canonical text — `{{1}}`, `{{2}}`… numbered in order of first
+// appearance, as WhatsApp requires — and `variables[n-1]` names the value
+// behind `{{n}}` (firstName, date, time, clinicName, clinicPhone). Manual
+// mode and the sandbox render `body` + `variables` directly.
+//
+// Two Content resources may exist at once: `activeContentSid` (approved, the
+// ONLY one the cron sends with) and `pendingContentSid` (under review). Each
+// carries its own variable order, so editing an approved template never
+// changes what the approved one receives. `approvalStatus` describes the
+// CURRENT `body`; `activeContentSid` may still hold an older approved text.
 export const whatsappTemplates = pgTable("whatsapp_templates", {
   id: text("id").primaryKey().$defaultFn(() => nanoid()),
   name: text("name").notNull().unique(),
   kind: whatsappEvent("kind").notNull(),
-  contentSid: text("content_sid"),
   language: text("language").notNull().default("fr"),
-  manualText: text("manual_text").notNull(),
+  body: text("body").notNull(),
+  variables: jsonb("variables").$type<string[]>().notNull(),
   isActive: boolean("is_active").notNull().default(true),
+  approvalStatus: whatsappTemplateApproval("approval_status").notNull().default("draft"),
+  // WhatsApp's own wording, as returned; the slice shows a French label.
+  rejectionReason: text("rejection_reason"),
+  // The generated WhatsApp template name of the latest submission.
+  approvalName: text("approval_name").unique(),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  // The status refresh visits the least recently checked first.
+  approvalCheckedAt: timestamp("approval_checked_at", { withTimezone: true }),
+  activeContentSid: text("active_content_sid"),
+  activeVariables: jsonb("active_variables").$type<string[]>(),
+  pendingContentSid: text("pending_content_sid"),
+  pendingVariables: jsonb("pending_variables").$type<string[]>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [
   // The target of the rules' composite foreign key below.
   uniqueIndex("whatsapp_templates_id_kind_idx").on(t.id, t.kind),
+  index("whatsapp_templates_approval_idx").on(t.approvalStatus, t.approvalCheckedAt),
   check(
-    "whatsapp_templates_content_sid_format",
-    sql`${t.contentSid} IS NULL OR ${t.contentSid} ~ '^HX[0-9a-fA-F]{32}$'`,
+    "whatsapp_templates_active_sid_format",
+    sql`${t.activeContentSid} IS NULL OR ${t.activeContentSid} ~ '^HX[0-9a-fA-F]{32}$'`,
+  ),
+  check(
+    "whatsapp_templates_pending_sid_format",
+    sql`${t.pendingContentSid} IS NULL OR ${t.pendingContentSid} ~ '^HX[0-9a-fA-F]{32}$'`,
+  ),
+  // A Content resource is never sent without the variable order it was made with.
+  check(
+    "whatsapp_templates_active_pair",
+    sql`(${t.activeContentSid} IS NULL) = (${t.activeVariables} IS NULL)`,
   ),
 ]);
 

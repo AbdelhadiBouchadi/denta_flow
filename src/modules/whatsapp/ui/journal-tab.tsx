@@ -89,7 +89,6 @@ const columns: ColumnDef<DataTableFeatures, WhatsappJournalRow>[] = [
         status={row.original.status}
         skipReason={row.original.skipReason}
         errorCode={row.original.errorCode}
-        errorMessage={row.original.errorMessage}
       />
     ),
   },

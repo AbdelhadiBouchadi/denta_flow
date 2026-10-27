@@ -100,11 +100,12 @@ import {
   whatsappTemplates,
 } from "./schema";
 import {
-  DEFAULT_MANUAL_TEXTS,
+  DEFAULT_BODIES,
   DEFAULT_TEMPLATE_NAMES,
   OCCURRENCE_CANCELED,
 } from "../modules/whatsapp/constants";
 import { computeSchedule } from "../modules/whatsapp/schedule";
+import { toCanonical } from "../modules/whatsapp/template-body";
 import { WhatsappEvent } from "../modules/whatsapp/types";
 
 // ── Deterministic randomness ────────────────────────────────────────────────
@@ -2920,6 +2921,8 @@ const WA_OUTCOMES: {
   { status: "sent" },
   { status: "failed", errorCode: "63016" },
   { status: "needs_attention" },
+  // prompts/33b: held back by the cron — the rule's template is not approved.
+  { status: "needs_attention", skip: "template_unapproved" },
   { status: "manual_opened" },
   { status: "skipped", skip: "no_consent", consent: "unknown" },
   { status: "skipped", skip: "landline", phone: "landline" },
@@ -2960,15 +2963,20 @@ function buildWhatsappSeed({
     WhatsappEvent.Reschedule,
     WhatsappEvent.Cancellation,
   ] as const;
-  const templates: (typeof whatsappTemplates.$inferInsert)[] = kinds.map((kind) => ({
-    id: WA_TEMPLATE_IDS[kind],
-    name: DEFAULT_TEMPLATE_NAMES[kind],
-    kind,
-    // Not configured: the clinic creates and approves them on Twilio.
-    contentSid: null,
-    language: "fr",
-    manualText: DEFAULT_MANUAL_TEXTS[kind],
-  }));
+  // Drafts with 33's French bodies (prompts/33b): the clinic sends them for
+  // WhatsApp approval from Paramètres › WhatsApp › Modèles in one click.
+  const templates: (typeof whatsappTemplates.$inferInsert)[] = kinds.map((kind) => {
+    const canonical = toCanonical(DEFAULT_BODIES[kind]);
+    return {
+      id: WA_TEMPLATE_IDS[kind],
+      name: DEFAULT_TEMPLATE_NAMES[kind],
+      kind,
+      language: "fr",
+      body: canonical.body,
+      variables: canonical.variables,
+      approvalStatus: "draft",
+    };
+  });
   const rules: (typeof whatsappRules.$inferInsert)[] = [
     {
       id: WA_RULE_IDS.reminder,
@@ -3065,7 +3073,10 @@ function buildWhatsappSeed({
       ),
     );
     const sent = WA_SENT.includes(next.status);
-    const viaTwilio = sent || next.status === "failed" || next.status === "needs_attention";
+    // A row held back for an unapproved template never reached Twilio.
+    const heldBack = next.skip === "template_unapproved";
+    const viaTwilio =
+      sent || next.status === "failed" || (next.status === "needs_attention" && !heldBack);
     messages.push({
       ...base,
       scheduledFor: at,
@@ -3087,11 +3098,11 @@ function buildWhatsappSeed({
       readAt: next.status === "read" ? new Date(at.getTime() + 20 * 60_000) : null,
       failedAt: next.status === "failed" ? new Date(at.getTime() + 30_000) : null,
       errorCode:
-        next.errorCode ?? (next.status === "needs_attention" ? "timeout" : null),
+        next.errorCode ?? (next.status === "needs_attention" && !heldBack ? "timeout" : null),
       errorMessage:
         next.errorCode === "63016"
           ? "Outside messaging window. For WhatsApp, use a Message Template instead."
-          : next.status === "needs_attention"
+          : next.status === "needs_attention" && !heldBack
             ? "No answer from Twilio before the timeout."
             : null,
       openedAt: next.status === "manual_opened" ? at : null,

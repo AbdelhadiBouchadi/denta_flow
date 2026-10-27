@@ -4,8 +4,8 @@ import {
   useQueryErrorResetBoundary,
   useSuspenseQuery,
 } from "@tanstack/react-query";
-import { ChevronRightIcon, RotateCcwIcon } from "lucide-react";
-import { useTransition } from "react";
+import { ChevronRightIcon, PlugZapIcon, RotateCcwIcon } from "lucide-react";
+import { useMemo, useTransition } from "react";
 import type { FallbackProps } from "react-error-boundary";
 import { toast } from "sonner";
 
@@ -13,6 +13,7 @@ import { DataTable } from "@/components/shared/data-table";
 import DayFilter from "@/components/shared/day-filter";
 import EmptyState from "@/components/shared/empty-state";
 import ErrorState from "@/components/shared/error-state";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,7 +35,7 @@ import {
 } from "../../types";
 import { ModeBanner } from "../mode-banner";
 import { useOpenManual } from "../rappel-actions";
-import { columns } from "../rappels-columns";
+import { getColumns } from "../rappels-columns";
 
 /** Which rows each chip keeps. «Non planifié» rows only show under «Tous». */
 const FILTERS: Record<RappelsFilter, (row: WhatsappDayRow) => boolean> = {
@@ -51,6 +52,11 @@ const FILTERS: Record<RappelsFilter, (row: WhatsappDayRow) => boolean> = {
  * defaults to tomorrow (`day` "" in the URL, resolved by the server on the
  * clinic clock); «À vérifier» is reachable from the dashboard through
  * `?status=needs_attention`.
+ *
+ * Two faces (prompts/33b, decision 1). Automatic and test mode: «Suivi des
+ * envois», a monitoring page — no «Suivant», no send button on healthy rows,
+ * only a small «Envoyer manuellement» where the server offers one. Manual
+ * mode: 33's work list, under a plain card saying why nothing leaves alone.
  */
 const RappelsView = () => {
   const trpc = useTRPC();
@@ -60,6 +66,8 @@ const RappelsView = () => {
     trpc.whatsapp.getByDay.queryOptions(byDayQueryInput(filters)),
   );
   const openManual = useOpenManual();
+  const manual = data.mode === WhatsappMode.Manual;
+  const columns = useMemo(() => getColumns(manual ? "work" : "rescue"), [manual]);
 
   const today = toClinicDate(new Date());
   const tomorrow = addCalendarDays(today, 1);
@@ -88,6 +96,7 @@ const RappelsView = () => {
     { label: COPY.summaryScheduled, value: data.counts.scheduled },
     { label: COPY.summarySent, value: data.counts.sent },
     { label: COPY.summaryDelivered, value: data.counts.delivered },
+    { label: COPY.summaryRead, value: data.counts.read },
     { label: COPY.summaryAttention, value: data.counts.attention, alert: true },
   ];
 
@@ -114,7 +123,7 @@ const RappelsView = () => {
           ))}
         </div>
         <DayFilter label={COPY.dayLabel} value={data.day} onChange={(day) => day && goTo(day)} />
-        {data.mode === WhatsappMode.Manual && (
+        {manual && (
           <Button size="sm" className="ml-auto" onClick={openNext}>
             {COPY.next}
             <ChevronRightIcon />
@@ -122,14 +131,33 @@ const RappelsView = () => {
         )}
       </div>
 
+      {manual ? (
+        <Alert>
+          <PlugZapIcon />
+          <AlertTitle>
+            {data.connected ? COPY.switchedOffCard : COPY.notConnectedCard}
+          </AlertTitle>
+          <AlertDescription>
+            {data.connected ? COPY.switchedOffHelp : COPY.notConnectedCardHelp}
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <div className="flex flex-col gap-0.5">
+          <h2 className="font-heading text-h3 text-foreground">{COPY.monitoringTitle}</h2>
+          <p className="text-muted-foreground text-sm">{COPY.monitoringDescription}</p>
+        </div>
+      )}
+
       <ModeBanner mode={data.mode} />
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         {summary.map((item) => (
           <Card
             key={item.label}
             className={cn(
               "gap-0.5 px-4 py-3",
+              // Five cards on two mobile columns: «À vérifier» takes a full row.
+              item.alert && "col-span-2 sm:col-span-1",
               item.alert && item.value > 0 && "border-warning/50 bg-warning-subtle",
             )}
           >
@@ -202,8 +230,8 @@ export const RappelsViewLoading = () => (
     className="flex flex-col gap-4 px-4 pb-4 md:px-8"
   >
     <Skeleton className="h-9 w-72" />
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {Array.from({ length: 4 }, (_, index) => (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      {Array.from({ length: 5 }, (_, index) => (
         <Skeleton key={index} className="h-16 rounded-xl" />
       ))}
     </div>
